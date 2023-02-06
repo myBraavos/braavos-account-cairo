@@ -272,7 +272,7 @@ namespace Signers {
             tempvar pedersen_ptr = pedersen_ptr;
             tempvar range_check_ptr = range_check_ptr;
         } else {
-            // FIXME: ASSERT (any maybe remove revokes handling)
+            // FIXME: ASSERT (and maybe remove revokes handling)
             tempvar syscall_ptr = syscall_ptr;
             tempvar pedersen_ptr = pedersen_ptr;
             tempvar range_check_ptr = range_check_ptr;
@@ -380,10 +380,8 @@ namespace Signers {
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
         range_check_ptr
-    }(
-        remove_signer_req: DeferredRemoveSignerRequest,
-        block_timestamp: felt
-    ) -> () {
+    }(block_timestamp: felt) -> () {
+        let (remove_signer_req) = Account_deferred_remove_signer.read();
         let have_remove_signer_etd = is_not_zero(remove_signer_req.expire_at);
         let remove_signer_etd_expired = is_le_felt(remove_signer_req.expire_at, block_timestamp);
 
@@ -407,15 +405,12 @@ namespace Signers {
         in_multisig_mode,
     ) -> (valid: felt) {
         alloc_locals;
-        let (local remove_signer_req) = Account_deferred_remove_signer.read();
-        apply_elapsed_etd_requests(remove_signer_req, block_timestamp);
 
         // Authorize Signer
         _authorize_signer(
             tx_info.account_contract_address,
             tx_info.signature_len, tx_info.signature,
             call_array_len, call_0_to, call_0_sel,
-            remove_signer_req,
             block_timestamp,
             in_multisig_mode,
         );
@@ -439,7 +434,6 @@ namespace Signers {
         self: felt,
         signature_len: felt, signature: felt*,
         call_array_len: felt, call_0_to: felt, call_0_sel: felt,
-        remove_signer_req: DeferredRemoveSignerRequest,
         block_timestamp: felt,
         in_multisig_mode: felt,
     ) -> () {
@@ -453,13 +447,6 @@ namespace Signers {
         // the if below is boolean equivalent via DeMorgan identity
         if (num_hw_signers * (1 - in_multisig_mode) == 0) {
             return ();
-        }
-
-        // We expected all expired requests to be removed prior to signer authorization
-        let have_etd = is_not_zero(remove_signer_req.expire_at);
-        let etd_expired = is_le_felt(remove_signer_req.expire_at, block_timestamp);
-        with_attr error_message("Signers: expired request not removed") {
-            assert have_etd * etd_expired = 0;
         }
 
         let (valid_signer_type) = _is_valid_secp256r1_signer_type(signer.signer.type);

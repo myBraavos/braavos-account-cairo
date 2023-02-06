@@ -390,6 +390,8 @@ func __validate__{
 
     // Account state House Keeping
     Account._migrate_storage_if_needed();
+    Multisig.apply_elapsed_etd_requests(block_timestamp);
+    Signers.apply_elapsed_etd_requests(block_timestamp);
 
     let (account_valid) = Account.account_validate(
         call_array_len, call_array,
