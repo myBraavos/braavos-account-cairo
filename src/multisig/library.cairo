@@ -1,7 +1,7 @@
 %lang starknet
 
 from starkware.cairo.common.alloc import alloc
-from starkware.cairo.common.bool import TRUE
+from starkware.cairo.common.bool import TRUE, FALSE
 from starkware.cairo.common.cairo_builtins import HashBuiltin, SignatureBuiltin
 from starkware.cairo.common.hash_state import (
     hash_init,
@@ -27,7 +27,10 @@ from src.account.library import (
     AccountCallArray,
     Call,
 )
-from src.signers.library import Signers
+from src.signers.library import (
+    Account_signers_num_hw_signers,
+    Signers
+)
 from src.utils.constants import (
     ACCOUNT_DEFAULT_EXECUTION_TIME_DELAY_SEC,
     DISABLE_MULTISIG_SELECTOR,
@@ -462,10 +465,8 @@ namespace Multisig {
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
         range_check_ptr
-    }(
-        disable_multisig_req: DeferredMultisigDisableRequest,
-        block_timestamp: felt
-    ) -> () {
+    }(block_timestamp: felt) -> () {
+        let (disable_multisig_req) = Multisig_deferred_disable_request.read();
         let have_disable_multisig_etd = is_not_zero(disable_multisig_req.expire_at);
         let disable_multisig_etd_expired = is_le_felt(
             disable_multisig_req.expire_at, block_timestamp);
@@ -489,6 +490,23 @@ namespace Multisig {
         tx_info: TxInfo*, block_timestamp: felt, block_num: felt,
     ) -> (valid: felt, is_multisig_mode: felt) {
         alloc_locals;
+
+        let (num_multisig_signers) = Multisig_num_signers.read();
+        let is_multisig_mode = is_not_zero(num_multisig_signers);
+        if (is_multisig_mode == 0) {
+            return (valid=TRUE, is_multisig_mode=FALSE);
+        }
+
+        let (num_additional_signers) = Account_signers_num_hw_signers.read();
+        let have_additional_signers = is_not_zero(num_additional_signers);
+        if (have_additional_signers == FALSE) {
+            // This will happen when remove signer with etd was not bundled
+            // with a disable multisig with etd, so we handle it here.
+            disable_multisig();
+            return (valid=TRUE, is_multisig_mode=FALSE);
+        }
+
+
         let (pending_multisig_txn) = Multisig_pending_transaction.read();
         let (pending_multisig_txn) = discard_expired_multisig_pending_transaction(
             pending_multisig_txn,
@@ -496,11 +514,7 @@ namespace Multisig {
         );
         let (local current_signer) = Signers.resolve_signer_from_sig(
             tx_info.signature_len, tx_info.signature);
-        let (disable_multisig_req) = Multisig_deferred_disable_request.read();
-        apply_elapsed_etd_requests(disable_multisig_req, block_timestamp);
 
-        let (num_multisig_signers) = Multisig_num_signers.read();
-        let is_multisig_mode = is_not_zero(num_multisig_signers);
         tempvar is_est_fee = 1 - is_not_zero(tx_info.version - TX_VERSION_1_EST_FEE);
         tempvar is_sign_pending_selector = 1 - is_not_zero(
             [call_array].selector - SIGN_PENDING_MULTISIG_TXN_SELECTOR
@@ -514,7 +528,7 @@ namespace Multisig {
             is_sign_pending_selector *
             is_stark_signer) == 1) {
             dummy_secp256r1_ecdsa_for_gas_fee();
-            return (valid=TRUE, is_multisig_mode=is_multisig_mode);
+            return (valid=TRUE, is_multisig_mode=TRUE);
         }
 
 

@@ -2021,6 +2021,65 @@ async def test_multisig_disable_with_etd(init_contracts):
 
 
 @pytest.mark.asyncio
+async def test_multisig_disable_after_remove_signer_etd_expire(init_contracts):
+    starknet, _, account1, _, _ = init_contracts
+
+    ecc_signer = TestECCSigner()
+
+    response = await signer.send_transactions(
+        account1,
+        [
+            (
+                account1.contract_address,
+                "add_signer",
+                [
+                    *ecc_signer.pk_x_uint256,
+                    *ecc_signer.pk_y_uint256,
+                    2,  # secp256r1
+                    0,
+                    0,
+                ],
+            ),
+            (account1.contract_address, "set_multisig", [2]),
+        ],
+    )
+    signer_id = response.call_info.retdata[1]
+
+    response = await signer.send_transactions(
+        account1,
+        [
+            (account1.contract_address, "remove_signer_with_etd", [signer_id]),
+        ],
+    )
+
+    # Make sure no multisig as remove_signer should not be deferred
+    execution_info = await account1.get_pending_multisig_transaction().call()
+    assert execution_info.result.pending_multisig_transaction.transaction_hash == 0
+
+    # Make sure we have a deferred request
+    exec_info = await account1.get_deferred_remove_signer_req().call()
+    deferred_request = exec_info.result.deferred_request
+    assert deferred_request.expire_at != 0
+
+    starknet.state.state.block_info = BlockInfo.create_for_testing(
+        0, deferred_request.expire_at + 1
+    )
+
+    # Deferred expired so we expect multisig to be removed, i.e. txn will execute as usual
+    response = await signer.send_transactions(
+        account1, [(account1.contract_address, "getPublicKey", [])]
+    )
+    assert_event_emitted_in_call_info(
+        response.validate_info.internal_calls[0],
+        from_address=account1.contract_address,
+        keys="MultisigDisabled",
+        data=[],
+    )
+
+    assert response.call_info.retdata[1] == signer.public_key
+
+
+@pytest.mark.asyncio
 async def test_multisig_cancel_disable_with_etd(init_contracts):
     starknet, _, account1, _, _ = init_contracts
 
