@@ -2052,7 +2052,7 @@ async def test_multisig_disable_after_remove_signer_etd_expire(init_contracts):
         ],
     )
 
-    # Make sure no multisig as remove_signer should not be deferred
+    # Make sure no multisig deferred txn as remove_signer_with_etd should not be deferred
     execution_info = await account1.get_pending_multisig_transaction().call()
     assert execution_info.result.pending_multisig_transaction.transaction_hash == 0
 
@@ -2065,7 +2065,8 @@ async def test_multisig_disable_after_remove_signer_etd_expire(init_contracts):
         0, deferred_request.expire_at + 1
     )
 
-    # Deferred expired so we expect multisig to be removed, i.e. txn will execute as usual
+    # Deferred remove signer expired so we expect multisig to be removed,
+    # i.e. txn will execute as usual
     response = await signer.send_transactions(
         account1, [(account1.contract_address, "getPublicKey", [])]
     )

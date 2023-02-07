@@ -485,7 +485,7 @@ func __execute__{
     let (multisig_deferred) = Multisig.multisig_execute(
         call_array[0].selector, tx_info
     );
-    if (multisig_deferred == 1) {
+    if (multisig_deferred == TRUE) {
         let (empty_resp: felt*) = alloc();
         return (response_len=0, response=empty_resp);
     }

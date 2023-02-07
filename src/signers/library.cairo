@@ -114,7 +114,7 @@ namespace Signers {
         current_id: felt, max_id: felt, signers: IndexedSignerModel*
     ) -> (num_signers: felt) {
         let current_id_overflow = is_le_felt(current_id, max_id);
-        if (current_id_overflow == 0) {
+        if (current_id_overflow == FALSE) {
             return (num_signers=0);
         }
 
@@ -160,7 +160,7 @@ namespace Signers {
         // For now we only support adding 1 additional secp256r1 signer and that's it
         with_attr error_message("Signers: can only add 1 secp256r1 signer") {
             let (valid_signer_type) = _is_valid_secp256r1_signer_type(signer.type);
-            assert valid_signer_type = 1;
+            assert valid_signer_type = TRUE;
             let (num_hw_signers) = Account_signers_num_hw_signers.read();
             assert num_hw_signers = 0;
             Account_signers_num_hw_signers.write(num_hw_signers + 1);
@@ -214,7 +214,7 @@ namespace Signers {
         with_attr error_message(
             "Signers: swap only supported for secp256r1 signer and between the same type") {
             let (valid_added_signer_type) = _is_valid_secp256r1_signer_type(added_signer.type);
-            assert valid_added_signer_type = 1;
+            assert valid_added_signer_type = TRUE;
             assert removed_signer.type = added_signer.type;
         }
 
@@ -262,7 +262,7 @@ namespace Signers {
         );
 
         let (valid_signer_type) = _is_valid_secp256r1_signer_type(removed_signer.type);
-        if (valid_signer_type == 1) {
+        if (valid_signer_type == TRUE) {
             let (num_hw_signers) = Account_signers_num_hw_signers.read();
             // enforce only 1 additional signer - when support more need to guarantee
             // that non-hws cannot remove hws
@@ -295,7 +295,7 @@ namespace Signers {
         let (removed_signer) = Account_signers.read(index);
         with_attr error_message("Signers: tried removing invalid signer") {
             let (valid_signer_type) = _is_valid_secp256r1_signer_type(removed_signer.type);
-            assert valid_signer_type = 1;
+            assert valid_signer_type = TRUE;
         }
 
         // For now we limit this API to seed signer only as it has no functional meaning with secp256r1
@@ -385,7 +385,7 @@ namespace Signers {
         let have_remove_signer_etd = is_not_zero(remove_signer_req.expire_at);
         let remove_signer_etd_expired = is_le_felt(remove_signer_req.expire_at, block_timestamp);
 
-        if (have_remove_signer_etd * remove_signer_etd_expired == 1) {
+        if (have_remove_signer_etd * remove_signer_etd_expired == TRUE) {
             remove_signer(remove_signer_req.signer_id);
             return();
         }
@@ -445,12 +445,12 @@ namespace Signers {
 
         // Dont limit txns on: not(secp256r1) OR multisig
         // the if below is boolean equivalent via DeMorgan identity
-        if (num_hw_signers * (1 - in_multisig_mode) == 0) {
+        if (num_hw_signers * (1 - in_multisig_mode) == FALSE) {
             return ();
         }
 
         let (valid_signer_type) = _is_valid_secp256r1_signer_type(signer.signer.type);
-        if (valid_signer_type == 1) {
+        if (valid_signer_type == TRUE) {
             // We either don't have a pending removal, or it wasn't expired yet
             // so we're good to go
             return ();
@@ -577,7 +577,7 @@ namespace Signers {
         }
 
         let (valid_secp256r1_type) = _is_valid_secp256r1_signer_type(signer.type);
-        if (valid_secp256r1_type == 1) {
+        if (valid_secp256r1_type == TRUE) {
             with_attr error_message("Signers: Invalid signature length") {
                 // 1 signer idx + 2 x uint256 (r,s)
                 assert signature_len = 5;
