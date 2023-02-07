@@ -143,7 +143,7 @@ namespace Multisig {
         let (multisig_num_signers) = Multisig_num_signers.read();
 
         if (multisig_num_signers == 0) {
-            return (multisig_deferred=0);
+            return (multisig_deferred=FALSE);
         }
         let (block_timestamp) = get_block_timestamp();
         let (block_num) = get_block_number();
@@ -155,8 +155,8 @@ namespace Multisig {
         // selector values below should be handled in current execute flow and not be deferred
         // since we are checking on selector, only one of these will be 1 or all 0
         let allowed_selector = is_allowed_selector_for_seed_in_multisig(selector);
-        if (allowed_selector == 1) {
-            return (multisig_deferred = 0);
+        if (allowed_selector == TRUE) {
+            return (multisig_deferred=FALSE);
         }
 
         // Create / Override pending txn
@@ -180,7 +180,7 @@ namespace Multisig {
         assert [pendingTxnEvtData + 1] = expire_at_sec;
         assert [pendingTxnEvtData + 2] = expire_at_block_num;
         emit_event(2, pendingTxnEvtKeys, 3, pendingTxnEvtData);
-        return (multisig_deferred=1);
+        return (multisig_deferred=TRUE);
     }
 
     func get_pending_multisig_transaction{
@@ -211,7 +211,7 @@ namespace Multisig {
         // Allow estimate fee for 2nd signer even when txn is still in RECEIVED state
         if (tx_info.version != TX_VERSION_1_EST_FEE) {
             with_attr error_message("Multisig: no pending multisig transaction") {
-                assert is_not_zero(pending_multisig_transaction.transaction_hash) = 1;
+                assert is_not_zero(pending_multisig_transaction.transaction_hash) = TRUE;
             }
         }
         let (current_signer) = Signers.resolve_signer_from_sig(
@@ -221,7 +221,7 @@ namespace Multisig {
         if (tx_info.version != TX_VERSION_1_EST_FEE) {
             with_attr error_message("Multisig: multisig signer can only sign once") {
                 assert is_not_zero(
-                    current_signer.index - pending_multisig_transaction.signer_1_id) = 1;
+                    current_signer.index - pending_multisig_transaction.signer_1_id) = TRUE;
             }
         }
 
@@ -445,7 +445,7 @@ namespace Multisig {
             pending_multisig_txn.expire_at_block_num, block_num);
         let expiry_sec_expired = is_le_felt(
             pending_multisig_txn.expire_at_sec, block_timestamp);
-        if (expiry_block_num_expired * expiry_sec_expired == 1) {
+        if (expiry_block_num_expired * expiry_sec_expired == TRUE) {
             let empty_pending_txn = PendingMultisigTransaction(
                 transaction_hash=0,
                 expire_at_sec=0,
@@ -471,7 +471,7 @@ namespace Multisig {
         let disable_multisig_etd_expired = is_le_felt(
             disable_multisig_req.expire_at, block_timestamp);
 
-        if (have_disable_multisig_etd * disable_multisig_etd_expired == 1) {
+        if (have_disable_multisig_etd * disable_multisig_etd_expired == TRUE) {
             disable_multisig();
             return();
         }
@@ -493,7 +493,7 @@ namespace Multisig {
 
         let (num_multisig_signers) = Multisig_num_signers.read();
         let is_multisig_mode = is_not_zero(num_multisig_signers);
-        if (is_multisig_mode == 0) {
+        if (is_multisig_mode == FALSE) {
             return (valid=TRUE, is_multisig_mode=FALSE);
         }
 
@@ -526,7 +526,7 @@ namespace Multisig {
         if ((is_multisig_mode *
             is_est_fee *
             is_sign_pending_selector *
-            is_stark_signer) == 1) {
+            is_stark_signer) == TRUE) {
             dummy_secp256r1_ecdsa_for_gas_fee();
             return (valid=TRUE, is_multisig_mode=TRUE);
         }
@@ -540,8 +540,8 @@ namespace Multisig {
         with_attr error_message("Multisig: invalid entry point for seed signing") {
             if ((is_stark_signer *
                  is_pending_txn_diff_signer *
-                pending_multisig_txn.is_disable_multisig_transaction) == 1) {
-                assert is_allowed_selector_for_seed_in_multisig([call_array].selector) = 1;
+                pending_multisig_txn.is_disable_multisig_transaction) == TRUE) {
+                assert is_allowed_selector_for_seed_in_multisig([call_array].selector) = TRUE;
             }
         }
 

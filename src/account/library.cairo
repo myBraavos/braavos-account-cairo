@@ -100,7 +100,7 @@ namespace Account {
 
         // additional signer provided, so set it up
         let have_signer = is_not_zero(additional_signer.type);
-        if (have_signer == 1) {
+        if (have_signer == TRUE) {
             Signers.add_signer(additional_signer);
             tempvar syscall_ptr = syscall_ptr;
             tempvar pedersen_ptr = pedersen_ptr;
@@ -190,7 +190,7 @@ namespace Account {
             // Allowed "call-to-self" multicall combinations
             if ((1 - is_not_zero(call_array_len - 2)) *
                 (1 - is_not_zero(call_array[0].to - self)) *
-                (1 - is_not_zero(call_array[1].to - self)) == 1) {
+                (1 - is_not_zero(call_array[1].to - self)) == TRUE) {
                 // add_signer -> set_multisig
                 tempvar as_sm = (1 - is_not_zero(call_array[0].selector - ADD_SIGNER_SELECTOR)) *
                     (1 - is_not_zero(call_array[1].selector - SET_MULTISIG_SELECTOR));
@@ -208,7 +208,7 @@ namespace Account {
                     (1 - is_not_zero(call_array[1].selector - CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR));
 
                 // OR between allowed combinations
-                // specific combination == 1 iff selectors in combination match call array
+                // specific combination == TRUE iff selectors in combination match call array
                 assert as_sm + dm_rs + dmwe_rswe + cdrsr_cddmr + dm_cdrsr = 1;
             } else {
                 _assert_multicall_valid_inner(self, call_array_len, call_array);
@@ -368,7 +368,7 @@ namespace Account {
     ) -> (valid: felt) {
         with_attr error_message("Account: no calls provided") {
             let have_calls = is_not_zero(call_array_len);
-            assert have_calls = 1;
+            assert have_calls = TRUE;
         }
 
         // Be defensive about dapps trying to trick the user into signing
