@@ -33,7 +33,7 @@ additional signer and revert back to seed-based signer. The request is time-dela
 
 The account can be moved into Multisig mode (currently supports 2 of 2) and it will not
 execute any transaction before the 2 signers defined in the account sign the transaction.
-The seed can request to disable multisig with a time-delay (currently 4 days). 
+The seed can request to disable multisig with a time-delay (currently 4 days).
 
 ## Building
 
