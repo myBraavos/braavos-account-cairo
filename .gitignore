@@ -110,6 +110,7 @@ env.bak/
 venv.bak/
 .history/
 .vscode/
+.releaserc
 
 # Spyder project settings
 .spyderproject

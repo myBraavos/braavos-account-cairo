@@ -18,7 +18,7 @@ const IERC165_ID = 0x01ffc9a7;
 const INVALID_ID = 0xffffffff;
 
 // Account
-const ACCOUNT_IMPL_VERSION = '000.000.007';
+const ACCOUNT_IMPL_VERSION = '000.000.008';
 const IACCOUNT_ID = 0xa66bd575;
 const IACCOUNT_ID_v0x1010102 = 0xf10dbd44;
 
