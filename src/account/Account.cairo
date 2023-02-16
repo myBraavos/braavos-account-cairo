@@ -11,6 +11,7 @@ from starkware.starknet.common.syscalls import (
     library_call,
 )
 from starkware.cairo.common.math import assert_not_zero
+from starkware.cairo.common.math_cmp import is_not_zero
 
 from lib.openzeppelin.upgrades.library import Proxy
 from src.account.library import (
@@ -118,7 +119,9 @@ func swap_signers{
 }(remove_index: felt, added_signer: SignerModel) -> (signer_id: felt) {
     Guards.assert_only_self();
 
-    return Signers.swap_signers(remove_index, added_signer);
+    let (multisig_num_signers) = Multisig.get_multisig_num_signers();
+    return Signers.swap_signers(
+        remove_index, added_signer, is_not_zero(multisig_num_signers));
 }
 
 @external
