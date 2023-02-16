@@ -160,7 +160,7 @@ namespace Account {
         // Data model migration comes here,
         // first version that calls this is b'000.000.006'
 
-        // b'000.000.007' - no migrations
+        // b'000.000.007', b'000.000.008', b'000.000.009' - no migrations
 
         // Update storage version
         Account_storage_migration_version.write(ACCOUNT_IMPL_VERSION);

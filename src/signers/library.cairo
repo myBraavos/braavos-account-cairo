@@ -20,10 +20,7 @@ from starkware.starknet.common.syscalls import (
 )
 
 from lib.secp256r1.ec import verify_point
-from lib.secp256r1.ecdsa import (
-    dummy_secp256r1_ecdsa_for_gas_fee,
-    secp256r1_verify_ecdsa,
-)
+from lib.secp256r1.ecdsa import secp256r1_verify_ecdsa
 from src.utils.constants import (
     REMOVE_SIGNER_WITH_ETD_SELECTOR,
     SIGNER_TYPE_SECP256R1_HWS,
@@ -198,13 +195,12 @@ namespace Signers {
         let (current_signer) = Signers.resolve_signer_from_sig(
             tx_info.signature_len, tx_info.signature);
 
-        // We only allow hw signer to swap, but still allow est fee
+        // We only allow hw signer to swap
         with_attr error_message(
             "Signers: can only swap secp256r1 signers using a secp256r1 signer") {
             let (valid_signer_type) = _is_valid_secp256r1_signer_type(
                 current_signer.signer.type);
-            // enforce (tx ver == est-fee) OR (valid secp256r1 signer used for swapping signers)
-            assert (tx_info.version - TX_VERSION_1_EST_FEE) * (valid_signer_type - 1) = 0;
+            assert valid_signer_type = TRUE;
         }
 
         with_attr error_message("Signers: cannot remove signer 0") {
@@ -404,8 +400,6 @@ namespace Signers {
         tx_info: TxInfo*, block_timestamp: felt, block_num: felt,
         in_multisig_mode,
     ) -> (valid: felt) {
-        alloc_locals;
-
         // Authorize Signer
         _authorize_signer(
             tx_info.account_contract_address,
@@ -414,6 +408,11 @@ namespace Signers {
             block_timestamp,
             in_multisig_mode,
         );
+
+        // For estimate fee txns we skip sig validation - client side should do it
+        if (is_le_felt(TX_VERSION_1_EST_FEE, tx_info.version) == TRUE) {
+            return (valid = TRUE);
+        }
 
         // Validate signature
         with_attr error_message("Signers: invalid signature") {
@@ -439,13 +438,13 @@ namespace Signers {
     ) -> () {
         alloc_locals;
 
-        let (num_hw_signers) = Account_signers_num_hw_signers.read();
+        let (num_additional_signers) = Account_signers_num_hw_signers.read();
         let (tx_info) = get_tx_info();
         let (signer) = Signers.resolve_signer_from_sig(signature_len, signature);
 
         // Dont limit txns on: not(secp256r1) OR multisig
         // the if below is boolean equivalent via DeMorgan identity
-        if (num_hw_signers * (1 - in_multisig_mode) == FALSE) {
+        if (num_additional_signers * (1 - in_multisig_mode) == FALSE) {
             return ();
         }
 
@@ -456,25 +455,16 @@ namespace Signers {
             return ();
         }
 
-        // else: At this point we have hw signer (num_hw_signer > 0) that is not expired
-        // but txn was sent with seed signer
+        // else: At this point we have secp256r1 signer (num_additional_signers > 0)
+        // we're not in multisig and txn was sent with seed signer
 
-        // 0. be defensive about the fact that we only allow seed signing - revisit when additional signer types are supported
-        with_attr error_message("Signers: either hw or seed signers are expected") {
+        // 0. be defensive about the fact that we only allow seed signing
+        // revisit when additional signer types are supported
+        with_attr error_message("Signers: either secp256r1 or seed signers are expected") {
             assert signer.signer.type = SIGNER_TYPE_STARK;
         }
 
-        // 1. Allow fee estimation using seed for better UX on app side (no bio pop-up)
-        if (tx_info.version == TX_VERSION_1_EST_FEE) {
-            if (call_0_sel != REMOVE_SIGNER_WITH_ETD_SELECTOR) {
-                // We simulate secp256r1 signing only in valid hw signing mode:
-                //  num_hw > 0 && seed && est_fee && !remove_signer_etd && !(etd && expired)
-                dummy_secp256r1_ecdsa_for_gas_fee();
-                return ();
-            }
-        }
-
-        // 2. Otherwise, limit seed signer only to ETD signer removal
+        // 1. Limit seed signer only to ETD signer removal
         with_attr error_message("Signers: invalid entry point for seed signing") {
             assert call_0_to = self;
             assert call_0_sel = REMOVE_SIGNER_WITH_ETD_SELECTOR;
