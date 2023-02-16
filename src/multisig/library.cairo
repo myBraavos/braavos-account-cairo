@@ -21,7 +21,7 @@ from starkware.starknet.common.syscalls import (
     get_tx_info,
     TxInfo,
 )
-from lib.secp256r1.ecdsa import dummy_secp256r1_ecdsa_for_gas_fee
+
 from src.account.library import (
     Account,
     AccountCallArray,
@@ -208,8 +208,9 @@ namespace Multisig {
         let (pending_multisig_transaction) = Multisig_pending_transaction.read();
         let (local tx_info) = get_tx_info();
 
-        // Allow estimate fee for 2nd signer even when txn is still in RECEIVED state
-        if (tx_info.version != TX_VERSION_1_EST_FEE) {
+        let is_estfee = is_le_felt(TX_VERSION_1_EST_FEE, tx_info.version);
+        // Let estimate fee pass for 2nd signer even when txn is still in RECEIVED state
+        if (is_estfee == FALSE) {
             with_attr error_message("Multisig: no pending multisig transaction") {
                 assert is_not_zero(pending_multisig_transaction.transaction_hash) = TRUE;
             }
@@ -217,8 +218,8 @@ namespace Multisig {
         let (current_signer) = Signers.resolve_signer_from_sig(
             tx_info.signature_len, tx_info.signature);
 
-        // Allow estimate fee with seed
-        if (tx_info.version != TX_VERSION_1_EST_FEE) {
+        // Let estimate fee pass for 2nd signer even when txn is still in RECEIVED state
+        if (is_estfee == FALSE) {
             with_attr error_message("Multisig: multisig signer can only sign once") {
                 assert is_not_zero(
                     current_signer.index - pending_multisig_transaction.signer_1_id) = TRUE;
@@ -239,8 +240,8 @@ namespace Multisig {
             }
             let pedersen_ptr = hash_ptr;
 
-            // Allow estimate fee for 2nd signer even when txn is still in RECEIVED state
-            if (tx_info.version != TX_VERSION_1_EST_FEE) {
+            // Let estimate fee pass for 2nd signer even when txn is still in RECEIVED state
+            if (is_estfee == FALSE) {
                 assert computed_hash = pending_multisig_transaction.transaction_hash;
             }
         }
@@ -515,22 +516,8 @@ namespace Multisig {
         let (local current_signer) = Signers.resolve_signer_from_sig(
             tx_info.signature_len, tx_info.signature);
 
-        tempvar is_est_fee = 1 - is_not_zero(tx_info.version - TX_VERSION_1_EST_FEE);
-        tempvar is_sign_pending_selector = 1 - is_not_zero(
-            [call_array].selector - SIGN_PENDING_MULTISIG_TXN_SELECTOR
-        );
         tempvar is_stark_signer = 1 - is_not_zero(
             current_signer.signer.type - SIGNER_TYPE_STARK);
-
-        // Allow estimate fee secp256r1 emulation for seed signer
-        if ((is_multisig_mode *
-            is_est_fee *
-            is_sign_pending_selector *
-            is_stark_signer) == TRUE) {
-            dummy_secp256r1_ecdsa_for_gas_fee();
-            return (valid=TRUE, is_multisig_mode=TRUE);
-        }
-
 
         // Protect against censorship when seed is stolen and tries to override
         // pending multisig txns preventing the second signer from recovering the account.
@@ -540,11 +527,11 @@ namespace Multisig {
         with_attr error_message("Multisig: invalid entry point for seed signing") {
             if ((is_stark_signer *
                  is_pending_txn_diff_signer *
-                pending_multisig_txn.is_disable_multisig_transaction) == TRUE) {
+                 pending_multisig_txn.is_disable_multisig_transaction) == TRUE) {
                 assert is_allowed_selector_for_seed_in_multisig([call_array].selector) = TRUE;
             }
         }
 
-        return (valid=TRUE, is_multisig_mode=is_multisig_mode);
+        return (valid=TRUE, is_multisig_mode=TRUE);
     }
 }

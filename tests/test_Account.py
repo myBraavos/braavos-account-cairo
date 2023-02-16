@@ -782,22 +782,6 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts, signer_type):
     )
     assert response.call_info.retdata[1] == signer.public_key
 
-    # Check that estimate fee tx version is allowed for seed signer
-    # and that it simulates secp256r1 verification (a lot of steps)
-    response = await signer.estimate_fee(
-        account1, [(account1.contract_address, "get_public_key", [])]
-    )
-    secp256r1_num_steps = response["n_steps"]
-    assert secp256r1_num_steps > 200000
-
-    # Check that est fee on remove signer with seed actually does not compute
-    # secp256r1 sig validation
-    response = await signer.estimate_fee(
-        account1, [(account1.contract_address, "remove_signer_with_etd", [signer_id])]
-    )
-    # Should be a lot lower, but for now we just check for lt
-    assert response["n_steps"] < secp256r1_num_steps
-
     # make sure we can't create a remove etd on an invalid signer
     await assert_revert(
         signer.send_transactions(
@@ -955,10 +939,7 @@ async def test_swap_signers(init_contracts, signer_type):
         "swap only supported for secp256r1 signer and between the same type",
     )
 
-    # Test that estimate fee is allowed for swap_signers for seed signer
-    _ = await signer.estimate_fee(account1, swap_call)
-
-    # Now remove old hw signer and add new hw signer in a single multicall
+    # Now remove old hw signer and add new hw signer in a single swap signers call
     response = await ecc_signer.send_transactions(account1, signer_id, swap_call)
     new_signer_id = response.call_info.retdata[1]
 
@@ -1532,11 +1513,6 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
             ],
         )
     ]
-
-    # verify seed can do estimate fee when it is the 2nd signer
-    if first_signer_type == "secp256r1":
-        est_fee_resp = await signer.estimate_fee(account1, second_signer_calls)
-        assert est_fee_resp["n_steps"] > 200000
 
     response = await send_transactions_2nd(
         *[account1, *signer_id_param_2nd, second_signer_calls]
