@@ -906,13 +906,6 @@ async def test_swap_signers(init_contracts, signer_type):
         0,
         0,
     ]
-    invalid_new_signer_payload = [
-        *ecc_signer_new.pk_x_uint256,
-        *ecc_signer_new.pk_y_uint256,
-        other_signer_type_id,  # secp256r1
-        0,
-        0,
-    ]
 
     swap_call = [
         (account1.contract_address, "swap_signers", [signer_id, *new_signer_payload])
@@ -923,21 +916,15 @@ async def test_swap_signers(init_contracts, signer_type):
         signer.send_transactions(account1, swap_call),
         "invalid entry point for seed signing",
     )
-    # Verify can't swap between different type of secp256r1 signers
+
+    # Verify seed can't be swapped
     await assert_revert(
-        ecc_signer.send_transactions(
-            account1,
-            signer_id,
-            [
-                (
-                    account1.contract_address,
-                    "swap_signers",
-                    [signer_id, *invalid_new_signer_payload],
-                )
-            ],
-        ),
-        "swap only supported for secp256r1 signer and between the same type",
+        ecc_signer.send_transactions(account1, signer_id, [
+            (account1.contract_address, "swap_signers", [0, 0, 0, 0, 0, 1, 0, 0])
+        ]),
+        "cannot remove signer 0"
     )
+
 
     # Now remove old hw signer and add new hw signer in a single swap signers call
     response = await ecc_signer.send_transactions(account1, signer_id, swap_call)
@@ -2055,6 +2042,116 @@ async def test_multisig_disable_after_remove_signer_etd_expire(init_contracts):
 
     assert response.call_info.retdata[1] == signer.public_key
 
+
+@pytest.mark.asyncio
+async def test_multisig_allow_seed_to_swap_signers(init_contracts):
+    _, _, account1, _, _ = init_contracts
+
+    ecc_signer = TestECCSigner()
+    add_signer_payload = [
+        *ecc_signer.pk_x_uint256,
+        *ecc_signer.pk_y_uint256,
+        2,  # secp256r1
+        0,
+        0,
+    ]
+
+    ecc_signer_2 = TestECCSigner()
+    add_signer_2_payload = [
+        *ecc_signer_2.pk_x_uint256,
+        *ecc_signer_2.pk_y_uint256,
+        2,  # secp256r1
+        0,
+        0,
+    ]
+
+    response = await signer.send_transactions(
+        account1,
+        [
+            (account1.contract_address, "add_signer", add_signer_payload),
+            (account1.contract_address, "set_multisig", [2]),
+        ],
+    )
+    signer_id = response.call_info.retdata[1]
+    swap_signers_calldata = [signer_id, *add_signer_2_payload]
+    # Start with seed
+    response = await signer.send_transactions(
+        account1,
+        [
+            (account1.contract_address, "swap_signers", swap_signers_calldata),
+        ],
+    )
+
+    # sign pending with original secp256r1 signer
+    response = await ecc_signer.send_transactions(
+        account1,
+        signer_id,
+        [
+            (
+                account1.contract_address,
+                "sign_pending_multisig_transaction",
+                [
+                    # raw calldata_len:
+                    6 + len(swap_signers_calldata),
+                    # raw calldata for execute (callarray len, call array, calldata len, calldata)
+                    1,
+                    account1.contract_address,
+                    get_selector_from_name("swap_signers"),
+                    0,
+                    len(swap_signers_calldata),
+                    len(swap_signers_calldata),
+                    *swap_signers_calldata,
+                    # pending nonce
+                    2,
+                    # pending max fee
+                    0,
+                    # txn ver
+                    1,
+                ],
+            ),
+        ],
+    )
+    new_signer_id = response.call_info.retdata[2]
+
+    # Now start with secp256r1 signer and finalize with seed
+    swap_signers_calldata = [new_signer_id, *add_signer_payload]
+
+    response = await ecc_signer_2.send_transactions(
+        account1, new_signer_id,
+        [
+            (account1.contract_address, "swap_signers", swap_signers_calldata),
+        ],
+    )
+    # And sign pending with seed
+    response = await signer.send_transactions(
+        account1,
+        [
+            (
+                account1.contract_address,
+                "sign_pending_multisig_transaction",
+                [
+                    # raw calldata_len:
+                    6 + len(swap_signers_calldata),
+                    # raw calldata for execute (callarray len, call array, calldata len, calldata)
+                    1,
+                    account1.contract_address,
+                    get_selector_from_name("swap_signers"),
+                    0,
+                    len(swap_signers_calldata),
+                    len(swap_signers_calldata),
+                    *swap_signers_calldata,
+                    # pending nonce
+                    4,
+                    # pending max fee
+                    0,
+                    # txn ver
+                    1,
+                ],
+            ),
+        ],
+    )
+    new_signer_id = response.call_info.retdata[2]
+ 
 
 @pytest.mark.asyncio
 async def test_multisig_cancel_disable_with_etd(init_contracts):

@@ -188,19 +188,25 @@ namespace Signers {
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
         range_check_ptr
-    }(remove_index: felt, added_signer: SignerModel) -> (signer_id: felt) {
+    }(
+        remove_index: felt,
+        added_signer: SignerModel,
+        in_multisig_mode: felt
+) -> (signer_id: felt) {
         alloc_locals;
 
         let (local tx_info: TxInfo*) = get_tx_info();
         let (current_signer) = Signers.resolve_signer_from_sig(
             tx_info.signature_len, tx_info.signature);
 
-        // We only allow hw signer to swap
+        // We only allow hw signer to swap unless we're in multisig then seed can also
+        // initiate or approve swap
         with_attr error_message(
             "Signers: can only swap secp256r1 signers using a secp256r1 signer") {
             let (valid_signer_type) = _is_valid_secp256r1_signer_type(
                 current_signer.signer.type);
-            assert valid_signer_type = TRUE;
+            // DeMorgan on valid_signer OR multisig mode
+            assert (1 - in_multisig_mode) * (1 - valid_signer_type) = FALSE;
         }
 
         with_attr error_message("Signers: cannot remove signer 0") {
@@ -208,10 +214,9 @@ namespace Signers {
         }
         let (removed_signer) = Account_signers.read(remove_index);
         with_attr error_message(
-            "Signers: swap only supported for secp256r1 signer and between the same type") {
+            "Signers: swap only supported for secp256r1 signer") {
             let (valid_added_signer_type) = _is_valid_secp256r1_signer_type(added_signer.type);
             assert valid_added_signer_type = TRUE;
-            assert removed_signer.type = added_signer.type;
         }
 
         // At this point we verified
@@ -409,7 +414,7 @@ namespace Signers {
             in_multisig_mode,
         );
 
-        // For estimate fee txns we skip sig validation - client side should do it
+        // For estimate fee txns we skip sig validation - client side should account for it
         if (is_le_felt(TX_VERSION_1_EST_FEE, tx_info.version) == TRUE) {
             return (valid = TRUE);
         }
