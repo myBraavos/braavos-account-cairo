@@ -238,6 +238,8 @@ func get_execution_time_delay{
     pedersen_ptr: HashBuiltin*,
     range_check_ptr,
 }() -> (etd_sec: felt) {
+    Account._migrate_storage_if_needed();
+
     return Account.get_execution_time_delay();
 }
 

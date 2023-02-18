@@ -1,10 +1,12 @@
 import pytest
 import pytest_asyncio
 
+from starkware.cairo.lang.vm.crypto import pedersen_hash
 from starkware.starknet.public.abi import get_selector_from_name, starknet_keccak
 from starkware.starknet.testing.starknet import Starknet
 from starkware.starknet.testing.starknet import StarknetContract
 from starkware.starknet.services.api.contract_class import ContractClass
+
 
 from utils import (
     TestSigner,
@@ -266,9 +268,17 @@ async def test_upgrade_sn09_prior_mult_signers_upgrade_migrate_to_sn010_and_txns
         contract_address=proxy_no_multi_signers.contract_address,
         deploy_call_info=proxy_no_multi_signers.deploy_call_info,
     )
-    # Before first txn (thus migration), we expect etd to be 0
+    # Before first txn we exepect @view functions to dry-run migrations themselves
     execution_info = await account_after_upgrade.get_execution_time_delay().call()
-    assert execution_info.result.etd_sec == 0
+    assert execution_info.result.etd_sec == 345600
+
+    execution_info = await account_after_upgrade.get_public_key().call()
+    assert execution_info.result.res == signer.public_key
+
+    hash = pedersen_hash(0x11111, 0x22222)
+    sig_r, sig_s = signer.signer.sign(hash)
+    execution_info = await account_after_upgrade.is_valid_signature(hash, [sig_r, sig_s]).call()
+    assert execution_info.result.is_valid == 1
 
     # First txn will migrate the key
     response = await signer.send_transactions(
