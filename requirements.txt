@@ -1,4 +1,5 @@
 cairo-lang==0.10.3
+# cairo-lang==0.11.X currently in conflict with cairo-nile and starknet-devnet
 cairo-nile==0.13.0
 cryptography==38.0.1
 pytest==7.2.0
