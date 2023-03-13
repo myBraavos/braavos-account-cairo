@@ -1,5 +1,6 @@
 from functools import reduce
 import math
+from os import environ
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes
@@ -166,6 +167,7 @@ def get_contract_def(path):
         files=[path],
         debug_info=True,
         disable_hint_validation=True,
+        cairo_path=environ.get("CAIRO_PATH").split(":")
     )
     return contract_def
 

@@ -19,8 +19,8 @@ from starkware.starknet.common.syscalls import (
     TxInfo,
 )
 
-from lib.secp256r1.ec import verify_point
-from lib.secp256r1.ecdsa import secp256r1_verify_ecdsa
+from lib.secp256r1.src.secp256r1.ec import verify_point
+from lib.secp256r1.src.secp256r1.signature import verify_secp256r1_signature
 from src.utils.constants import (
     REMOVE_SIGNER_WITH_ETD_SELECTOR,
     SIGNER_TYPE_SECP256R1_HWS,
@@ -538,8 +538,8 @@ namespace Signers {
         let (r_bigint3) = uint256_to_bigint(r_uint256);
         let (s_bigint3) = uint256_to_bigint(s_uint256);
         let (hash_high, hash_low) = split_felt(hash);
-        let (hash_uint256) = uint256_to_bigint(Uint256(low=hash_low, high=hash_high));
-        secp256r1_verify_ecdsa(EcPoint(x=x, y=y), hash_uint256, r_bigint3, s_bigint3);
+        let (hash_bigint3) = uint256_to_bigint(Uint256(low=hash_low, high=hash_high));
+        verify_secp256r1_signature(hash_bigint3, r_bigint3, s_bigint3, EcPoint(x=x, y=y));
         return (is_valid=TRUE);
     }
 
