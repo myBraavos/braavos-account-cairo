@@ -214,10 +214,13 @@ namespace Account {
                 // disable_multisig -> cancel_deferred_remove_signer_req
                 tempvar dm_cdrsr = (1 - is_not_zero(call_array[0].selector - DISABLE_MULTISIG_SELECTOR)) *
                     (1 - is_not_zero(call_array[1].selector - CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR));
+                // cancel_deferred_remove_signer_req -> set_multisig
+                tempvar cdrsr_sm = (1 - is_not_zero(call_array[0].selector - CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR)) *
+                    (1 - is_not_zero(call_array[1].selector - SET_MULTISIG_SELECTOR));
 
                 // OR between allowed combinations
                 // specific combination == TRUE iff selectors in combination match call array
-                assert as_sm + dm_rs + dmwe_rswe + cdrsr_cddmr + dm_cdrsr = 1;
+                assert as_sm + dm_rs + dmwe_rswe + cdrsr_cddmr + dm_cdrsr + cdrsr_sm = 1;
             } else {
                 _assert_multicall_valid_inner(self, call_array_len, call_array);
             }
