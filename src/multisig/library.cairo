@@ -98,7 +98,6 @@ func Multisig_deferred_disable_request() -> (res: DeferredMultisigDisableRequest
 }
 
 namespace Multisig {
-    // attack surface: external input - num_signers
     func set_multisig{
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,

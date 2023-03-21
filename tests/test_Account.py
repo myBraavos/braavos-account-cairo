@@ -362,6 +362,17 @@ async def test_multicall_allowed_call_to_self_combinations(
         "While handling calldata",
     )
 
+    await assert_revert(
+        signer.send_transactions(
+            account,
+            [
+                (account.contract_address, "cancel_deferred_remove_signer_req", []),
+                (account.contract_address, "set_multisig", []),
+            ],
+        ),
+        "While handling calldata",
+    )
+
     # Now verify that un-authorized combinations are not possible
     # even if the first call is from an authorized combination
     await assert_revert(
