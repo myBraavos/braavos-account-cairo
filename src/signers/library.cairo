@@ -23,8 +23,7 @@ from lib.secp256r1.src.secp256r1.ec import verify_point
 from lib.secp256r1.src.secp256r1.signature import verify_secp256r1_signature
 from src.utils.constants import (
     REMOVE_SIGNER_WITH_ETD_SELECTOR,
-    SIGNER_TYPE_SECP256R1_HWS,
-    SIGNER_TYPE_SECP256R1_SWS,
+    SIGNER_TYPE_SECP256R1,
     SIGNER_TYPE_STARK,
     SIGNER_TYPE_UNUSED,
     TX_VERSION_1_EST_FEE
@@ -156,8 +155,7 @@ namespace Signers {
     }(signer: SignerModel) -> (signer_id: felt) {
         // For now we only support adding 1 additional secp256r1 signer and that's it
         with_attr error_message("Signers: can only add 1 secp256r1 signer") {
-            let (valid_signer_type) = _is_valid_secp256r1_signer_type(signer.type);
-            assert valid_signer_type = TRUE;
+            assert signer.type = SIGNER_TYPE_SECP256R1;
             let (num_hw_signers) = Account_signers_num_hw_signers.read();
             assert num_hw_signers = 0;
             Account_signers_num_hw_signers.write(num_hw_signers + 1);
@@ -203,10 +201,9 @@ namespace Signers {
         // initiate or approve swap
         with_attr error_message(
             "Signers: can only swap secp256r1 signers using a secp256r1 signer") {
-            let (valid_signer_type) = _is_valid_secp256r1_signer_type(
-                current_signer.signer.type);
             // DeMorgan on valid_signer OR multisig mode
-            assert (1 - in_multisig_mode) * (1 - valid_signer_type) = FALSE;
+            assert (1 - in_multisig_mode) * is_not_zero(
+                current_signer.signer.type - SIGNER_TYPE_SECP256R1) = FALSE;
         }
 
         with_attr error_message("Signers: cannot remove signer 0") {
@@ -215,8 +212,7 @@ namespace Signers {
         let (removed_signer) = Account_signers.read(remove_index);
         with_attr error_message(
             "Signers: swap only supported for secp256r1 signer") {
-            let (valid_added_signer_type) = _is_valid_secp256r1_signer_type(added_signer.type);
-            assert valid_added_signer_type = TRUE;
+            assert added_signer.type = SIGNER_TYPE_SECP256R1;
         }
 
         // At this point we verified
@@ -262,8 +258,7 @@ namespace Signers {
             )
         );
 
-        let (valid_signer_type) = _is_valid_secp256r1_signer_type(removed_signer.type);
-        if (valid_signer_type == TRUE) {
+        if (removed_signer.type == SIGNER_TYPE_SECP256R1) {
             let (num_hw_signers) = Account_signers_num_hw_signers.read();
             // enforce only 1 additional signer - when support more need to guarantee
             // that non-hws cannot remove hws
@@ -295,8 +290,7 @@ namespace Signers {
         // Make sure we remove a hw signer, this also implies that there is one
         let (removed_signer) = Account_signers.read(index);
         with_attr error_message("Signers: tried removing invalid signer") {
-            let (valid_signer_type) = _is_valid_secp256r1_signer_type(removed_signer.type);
-            assert valid_signer_type = TRUE;
+            assert removed_signer.type = SIGNER_TYPE_SECP256R1;
         }
 
         // For now we limit this API to seed signer only as it has no functional meaning with secp256r1
@@ -453,8 +447,7 @@ namespace Signers {
             return ();
         }
 
-        let (valid_signer_type) = _is_valid_secp256r1_signer_type(signer.signer.type);
-        if (valid_signer_type == TRUE) {
+        if (signer.signer.type == SIGNER_TYPE_SECP256R1) {
             // We either don't have a pending removal, or it wasn't expired yet
             // so we're good to go
             return ();
@@ -479,20 +472,6 @@ namespace Signers {
         }
 
         return ();
-    }
-
-
-    // We need the implicit args so they won't be revoked in calling flow
-    func _is_valid_secp256r1_signer_type{
-        syscall_ptr: felt*,
-        pedersen_ptr: HashBuiltin*,
-        range_check_ptr
-    }(signer_type: felt) -> (valid: felt) {
-        let invalid_signer_type = is_not_zero(
-            (signer_type - SIGNER_TYPE_SECP256R1_HWS) * (signer_type - SIGNER_TYPE_SECP256R1_SWS)
-        );
-
-        return (valid=(1 - invalid_signer_type));
     }
 
     func _is_valid_stark_signature{
@@ -571,8 +550,7 @@ namespace Signers {
             return (is_valid=TRUE);
         }
 
-        let (valid_secp256r1_type) = _is_valid_secp256r1_signer_type(signer.type);
-        if (valid_secp256r1_type == TRUE) {
+        if (signer.type == SIGNER_TYPE_SECP256R1) {
             with_attr error_message("Signers: Invalid signature length") {
                 // 1 signer idx + 2 x uint256 (r,s)
                 assert signature_len = 5;

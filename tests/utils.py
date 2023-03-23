@@ -166,8 +166,10 @@ def get_contract_def(path):
     contract_def = compile_starknet_files(
         files=[path],
         debug_info=True,
-        disable_hint_validation=True,
+        disable_hint_validation=False,
         cairo_path=environ.get("CAIRO_PATH").split(":")
+        if environ.get("CAIRO_PATH")
+        else None,
     )
     return contract_def
 
@@ -203,8 +205,10 @@ async def deploy_account_txn(
     account_base_impl,
     account_actual_impl,
     hw_signer=None,
+    salt=None,
 ):
     proxy_decl = await starknet.declare(contract_class=proxy_def)
+    salt = salt or stark_signer.public_key
 
     deploy_account_txn_ctor_calldata = [
         account_base_impl.class_hash,
@@ -214,7 +218,7 @@ async def deploy_account_txn(
     ]
 
     deploy_account_contract_address = contract_address.calculate_contract_address(
-        salt=stark_signer.public_key,
+        salt=salt,
         contract_class=proxy_def,
         constructor_calldata=deploy_account_txn_ctor_calldata,
         deployer_address=0,
@@ -227,7 +231,7 @@ async def deploy_account_txn(
         constructor_calldata=deploy_account_txn_ctor_calldata,
         max_fee=0,
         nonce=0,
-        salt=stark_signer.public_key,
+        salt=salt,
         chain_id=StarknetChainId.TESTNET.value,
     )
 
@@ -248,7 +252,7 @@ async def deploy_account_txn(
 
     deploy_account_txn = await InternalDeployAccount.create_for_testing(
         contract_class=proxy_def,
-        contract_address_salt=stark_signer.public_key,
+        contract_address_salt=salt,
         constructor_calldata=deploy_account_txn_ctor_calldata,
         max_fee=0,
         chain_id=StarknetChainId.TESTNET.value,
@@ -391,7 +395,7 @@ class TestSigner:
     async def send_transactions_v0(self, account, calls, nonce=None, max_fee=0):
         execute_calldata = [
             *get_execute_calldata(calls),
-            *([nonce] if nonce != None else [])
+            *([nonce] if nonce != None else []),
         ]
         execute_selector = get_selector_from_name("__execute__")
         tx_hash = calculate_transaction_hash_common(
