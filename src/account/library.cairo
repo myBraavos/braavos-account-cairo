@@ -15,6 +15,7 @@ from starkware.cairo.common.math_cmp import is_not_zero
 from starkware.cairo.common.bool import TRUE, FALSE
 
 from lib.openzeppelin.upgrades.library import Proxy
+from src.migrations.library import Migrations
 from src.signers.library import (
     Account_public_key,
     Account_signers,
@@ -157,13 +158,20 @@ namespace Account {
         range_check_ptr
     }(from_version: felt) -> () {
         alloc_locals;
+        // Update storage version
+        Account_storage_migration_version.write(ACCOUNT_IMPL_VERSION);
+
         // Data model migration comes here,
         // first version that calls this is b'000.000.006'
 
         // b'000.000.007', b'000.000.008', b'000.000.009' - no migrations
+        with_attr error_message("Account: upgrade data migration failed") {
+            if (from_version == '000.000.009') {
+                let (res) = Migrations.migrate_000_000_009();
+                assert res = TRUE;
+            }
+        }
 
-        // Update storage version
-        Account_storage_migration_version.write(ACCOUNT_IMPL_VERSION);
         return ();
     }
 

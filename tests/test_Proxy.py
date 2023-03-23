@@ -7,21 +7,21 @@ from starkware.starknet.testing.starknet import Starknet
 from starkware.starknet.testing.starknet import StarknetContract
 from starkware.starknet.services.api.contract_class import ContractClass
 
-
 from utils import (
     TestSigner,
     assert_revert,
     assert_event_emitted,
+    deploy_account_txn,
     contract_path,
     get_contract_def,
     parse_get_signers_response,
     deploy_account_txn,
     str_to_felt,
+    TestECCSigner,
 )
 
 
 IACCOUNT_ID = 0xF10DBD44
-
 
 signer = TestSigner(123456789987654321)
 signer2 = TestSigner(987654321123456789)
@@ -201,7 +201,7 @@ async def test_upgrade(proxy_init):
     assert execution_info.result.implementation == declaration.class_hash
 
     execution_info = await account1.get_impl_version().call()
-    assert execution_info.result.res == str_to_felt("000.000.009")
+    assert execution_info.result.res == str_to_felt("000.000.010")
 
 
 @pytest.mark.asyncio
@@ -277,7 +277,9 @@ async def test_upgrade_sn09_prior_mult_signers_upgrade_migrate_to_sn010_and_txns
 
     hash = pedersen_hash(0x11111, 0x22222)
     sig_r, sig_s = signer.signer.sign(hash)
-    execution_info = await account_after_upgrade.is_valid_signature(hash, [sig_r, sig_s]).call()
+    execution_info = await account_after_upgrade.is_valid_signature(
+        hash, [sig_r, sig_s]
+    ).call()
     assert execution_info.result.is_valid == 1
 
     # First txn will migrate the key
@@ -378,6 +380,176 @@ async def test_upgrade_sn09_mult_signers_upgrade_migrate_to_sn010_and_txns(
     assert all_signers[0][5] == 1  # Type is STARK signer
     assert all_signers[0][0] == 0  # index is 0
     assert all_signers[0][1] == signer.public_key  # public key is correct
+
+
+@pytest.mark.asyncio
+async def test_upgrade_sn09_prior_mult_signers_upgrade_migrate_to_sn010_and_txns(
+    contract_defs, proxy_init
+):
+    proxy_def, _, _ = contract_defs
+    starknet, declaration, _, _, _ = proxy_init
+
+    with open(
+        file=contract_path("tests/aux/Braavos_Account_prior_mult_signers.json"),
+        encoding="utf-8",
+    ) as f:
+        account_class_before_multi_signers = ContractClass.loads(f.read())
+        account_class_before_multi_signers_decl = await starknet.declare(
+            contract_class=account_class_before_multi_signers,
+        )
+
+    # Uses legacy deploy
+    proxy_no_multi_signers = await starknet.deploy(
+        contract_class=proxy_def,
+        constructor_calldata=[
+            account_class_before_multi_signers_decl.class_hash,
+            get_selector_from_name("initializer"),
+            1,
+            signer.public_key,
+        ],
+    )
+
+    account_no_multi_signers = StarknetContract(
+        state=starknet.state,
+        abi=account_class_before_multi_signers_decl.abi,
+        contract_address=proxy_no_multi_signers.contract_address,
+        deploy_call_info=proxy_no_multi_signers.deploy_call_info,
+    )
+
+    # Upgrade SN 0.9.X contract so we need to send txn v0
+    tx_info = await signer.send_transactions_v0(
+        account_no_multi_signers,
+        [
+            (
+                proxy_no_multi_signers.contract_address,
+                "upgrade",
+                [declaration.class_hash],
+            )
+        ],
+        nonce=0,
+    )
+
+    assert_event_emitted(
+        tx_info,
+        from_address=proxy_no_multi_signers.contract_address,
+        keys="Upgraded",
+        data=[declaration.class_hash],
+    )
+
+    execution_info = await proxy_no_multi_signers.get_implementation().call()
+    assert execution_info.result.implementation == declaration.class_hash
+
+    # Send a txn to check for public key migration to multi signers
+    account_after_upgrade = StarknetContract(
+        state=starknet.state,
+        abi=declaration.abi,
+        contract_address=proxy_no_multi_signers.contract_address,
+        deploy_call_info=proxy_no_multi_signers.deploy_call_info,
+    )
+    # Before first txn we exepect @view functions to dry-run migrations themselves
+    execution_info = await account_after_upgrade.get_execution_time_delay().call()
+    assert execution_info.result.etd_sec == 345600
+
+    execution_info = await account_after_upgrade.get_public_key().call()
+    assert execution_info.result.res == signer.public_key
+
+    hash = pedersen_hash(0x11111, 0x22222)
+    sig_r, sig_s = signer.signer.sign(hash)
+    execution_info = await account_after_upgrade.is_valid_signature(
+        hash, [sig_r, sig_s]
+    ).call()
+    assert execution_info.result.is_valid == 1
+
+    # First txn will migrate the key
+    response = await signer.send_transactions(
+        account_after_upgrade,
+        [(account_after_upgrade.contract_address, "get_public_key", [])],
+    )
+    assert response.call_info.retdata[1] == signer.public_key
+
+    # And will also migrate ETD
+    execution_info = await account_after_upgrade.get_execution_time_delay().call()
+    assert execution_info.result.etd_sec != 0
+
+    # Second txn will use the signer from the list and let's validate it
+    # by sending with signer id (which must be 0) and parse the response
+    response = await signer.send_transactions(
+        account_after_upgrade,
+        [(account_after_upgrade.contract_address, "get_signers", [])],
+        signer_id=0,
+    )
+
+    # skip __execute__'s raw retdata at index 0 when parsing
+    all_signers = parse_get_signers_response(response.call_info.retdata[1:])
+    assert all_signers[0][5] == 1  # Type is STARK signer
+    assert all_signers[0][0] == 0  # index is 0
+    assert all_signers[0][1] == signer.public_key  # public key is correct
+
+
+@pytest.mark.asyncio
+async def test_signer_type_3_migration_from_v000_000_009(contract_defs, proxy_init):
+    proxy_def, account_def, account_base_impl_def = contract_defs
+    starknet, declaration, _, _, _ = proxy_init
+
+    with open(
+        file=contract_path(
+            "tests/aux/Braavos_Account_with_type_3_secp256r1_signer.json"
+        ),
+        encoding="utf-8",
+    ) as f:
+        account_class_with_type_3 = ContractClass.loads(f.read())
+        account_class_with_type_3_decl = await starknet.declare(
+            contract_class=account_class_with_type_3,
+        )
+
+    account_base_impl_decl = await starknet.declare(
+        contract_class=account_base_impl_def,
+    )
+
+    account_actual_impl = await starknet.declare(
+        contract_class=account_def,
+    )
+
+    ecc_signer = TestECCSigner()
+    signer_payload = [
+        *ecc_signer.pk_x_uint256,
+        *ecc_signer.pk_y_uint256,
+        3,  # DEPRECATED secp256r1 - should be migrated on upgrade
+        0,
+        0,
+    ]
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        account_base_impl_decl,
+        account_class_with_type_3_decl,
+        hw_signer=signer_payload,
+        salt=0xDEADBEEF,  # We need a different address then the one created in fixtures
+    )
+
+    response = await ecc_signer.send_transactions(
+        account, 1, [(account.contract_address, "get_signers", [])]
+    )
+    all_signers = parse_get_signers_response(response.call_info.retdata[1:])
+    # Verify we are setup with DEPRECATED (type 3) secp256r1 signer
+    hw_signers = [x for x in all_signers if x[5] == 3]
+    assert len(hw_signers) == 1 and len(all_signers) == 2
+
+    await ecc_signer.send_transactions(
+        account,
+        1,
+        [(account.contract_address, "upgrade", [account_actual_impl.class_hash])],
+    )
+
+    response = await ecc_signer.send_transactions(
+        account, 1, [(account.contract_address, "get_signers", [])]
+    )
+    all_signers = parse_get_signers_response(response.call_info.retdata[1:])
+    # Verify signer was migrated
+    hw_signers = [x for x in all_signers if x[5] == 2]
+    assert len(hw_signers) == 1 and len(all_signers) == 2
 
 
 # TODO: verify we emit an event on key change (constructor + ?set_public_key?)

@@ -48,9 +48,9 @@ async def init_module_scoped_starknet():
     return starknet
 
 
-@pytest_asyncio.fixture(scope="module", params=["hws", "sws"])
+@pytest_asyncio.fixture(scope="module")
 async def init_module_scoped_secp256r1_accounts(
-    request, contract_defs, init_module_scoped_starknet
+    contract_defs, init_module_scoped_starknet
 ):
     starknet = init_module_scoped_starknet
     proxy_def, account_def, _, account_base_impl_def = contract_defs
@@ -63,7 +63,7 @@ async def init_module_scoped_secp256r1_accounts(
         contract_class=account_def,
     )
 
-    signer_type_id = 2 if request.param == "hws" else 3
+    signer_type_id = 2
     ecc_signer = TestECCSigner()
     # We need the below to be able to create 2 different addresses
     signer = TestSigner(123456789987654321 + signer_type_id)
@@ -425,8 +425,7 @@ async def test_is_valid_sig_wrong_hash_stark_indexed(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("signer_type", ["hws", "sws"])
-async def test_is_valid_sig_sanity_secp256r1_indexed(init_contracts, signer_type):
+async def test_is_valid_sig_sanity_secp256r1_indexed(init_contracts):
     _, _, account1, _, _ = init_contracts
 
     response = await signer.send_transactions(
@@ -440,7 +439,7 @@ async def test_is_valid_sig_sanity_secp256r1_indexed(init_contracts, signer_type
                     30422779786664925426668165762677272064,
                     304047604613500862221062801855681891347,
                     330241335170734304790414819756797874939,
-                    2 if signer_type == "hws" else 3,  # secp256r1
+                    2,  # secp256r1
                     0,
                     0,
                 ],
@@ -566,16 +565,15 @@ async def test_block_reentrant_call(init_module_scoped_starknet_account):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("signer_type", ["hws", "sws"])
 async def test_add_secp256r1_signer_from_seed_and_remove_it_from_secp256r1_signer(
-    init_contracts, signer_type
+    init_contracts,
 ):
     _, _, account1, _, _ = init_contracts
 
     response = await signer.send_transactions(
         account1, [(account1.contract_address, "get_signers", [])]
     )
-    signer_type_id = 2 if signer_type == "hws" else 3
+    signer_type_id = 2
     all_signers_before = parse_get_signers_response(response.call_info.retdata[1:])
     expected_next_id = max([x[0] for x in all_signers_before]) + 1
     ecc_signer = TestECCSigner()
@@ -654,10 +652,9 @@ async def test_block_v0_txn(init_contracts):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("signer_type", ["hws", "sws"])
-async def test_failure_on_adding_invalid_secp256r1_signer(init_contracts, signer_type):
+async def test_failure_on_adding_invalid_secp256r1_signer(init_contracts):
     _, _, account1, _, _ = init_contracts
-    signer_type_id = 2 if signer_type == "hws" else 3
+    signer_type_id = 2
     response = await signer.send_transactions(
         account1, [(account1.contract_address, "get_signers", [])]
     )
@@ -734,10 +731,9 @@ async def test_failure_on_adding_invalid_secp256r1_signer(init_contracts, signer
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("signer_type", ["hws", "sws"])
-async def test_secp256r1_signer_removal_from_seed(init_contracts, signer_type):
+async def test_secp256r1_signer_removal_from_seed(init_contracts):
     starknet, _, account1, _, _ = init_contracts
-    signer_type_id = 2 if signer_type == "hws" else 3
+    signer_type_id = 2
     response = await signer.send_transactions(
         account1, [(account1.contract_address, "get_signers", [])]
     )
@@ -866,11 +862,9 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts, signer_type):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("signer_type", ["hws", "sws"])
-async def test_swap_signers(init_contracts, signer_type):
+async def test_swap_signers(init_contracts):
     _, _, account1, _, _ = init_contracts
-    signer_type_id = 2 if signer_type == "hws" else 3
-    other_signer_type_id = 3 if signer_type == "hws" else 2
+    signer_type_id = 2
 
     response = await signer.send_transactions(
         account1, [(account1.contract_address, "get_signers", [])]
@@ -919,12 +913,13 @@ async def test_swap_signers(init_contracts, signer_type):
 
     # Verify seed can't be swapped
     await assert_revert(
-        ecc_signer.send_transactions(account1, signer_id, [
-            (account1.contract_address, "swap_signers", [0, 0, 0, 0, 0, 1, 0, 0])
-        ]),
-        "cannot remove signer 0"
+        ecc_signer.send_transactions(
+            account1,
+            signer_id,
+            [(account1.contract_address, "swap_signers", [0, 0, 0, 0, 0, 1, 0, 0])],
+        ),
+        "cannot remove signer 0",
     )
-
 
     # Now remove old hw signer and add new hw signer in a single swap signers call
     response = await ecc_signer.send_transactions(account1, signer_id, swap_call)
@@ -979,10 +974,9 @@ async def test_swap_signers(init_contracts, signer_type):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("signer_type", ["hws", "sws"])
-async def test_cancel_signer_remove_request(init_contracts, signer_type):
+async def test_cancel_signer_remove_request(init_contracts):
     starknet, _, account1, _, _ = init_contracts
-    signer_type_id = 2 if signer_type == "hws" else 3
+    signer_type_id = 2
 
     response = await signer.send_transactions(
         account1, [(account1.contract_address, "get_signers", [])]
@@ -1107,10 +1101,9 @@ async def test_initializer_no_secp256r1_signer(contract_defs):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("signer_type", ["hws", "sws"])
-async def test_initializer_with_secp256r1_signer(contract_defs, signer_type):
+async def test_initializer_with_secp256r1_signer(contract_defs):
     proxy_def, account_def, _, account_base_impl_def = contract_defs
-    signer_type_id = 2 if signer_type == "hws" else 3
+    signer_type_id = 2
     starknet = await Starknet.empty()
 
     account_base_impl_decl = await starknet.declare(
@@ -1235,7 +1228,7 @@ async def test_set_multisig_add_signer_multicall(init_contracts):
                 [
                     *ecc_signer.pk_x_uint256,
                     *ecc_signer.pk_y_uint256,
-                    3,  # secp256r1
+                    2,  # secp256r1
                     0,
                     0,
                 ],
@@ -1313,7 +1306,7 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
                 [
                     *ecc_signer.pk_x_uint256,
                     *ecc_signer.pk_y_uint256,
-                    3,  # secp256r1
+                    2,  # secp256r1
                     0,
                     0,
                 ],
@@ -1536,7 +1529,7 @@ async def test_multisig_override_pending_txn(init_contracts):
                 [
                     *ecc_signer.pk_x_uint256,
                     *ecc_signer.pk_y_uint256,
-                    3,  # secp256r1
+                    2,  # secp256r1
                     0,
                     0,
                 ],
@@ -1578,7 +1571,7 @@ async def test_multisig_discard_expired_pending_txn(init_contracts):
                 [
                     *ecc_signer.pk_x_uint256,
                     *ecc_signer.pk_y_uint256,
-                    3,  # secp256r1
+                    2,  # secp256r1
                     0,
                     0,
                 ],
@@ -1717,7 +1710,7 @@ async def test_multisig_disable(init_contracts, disable_multisig_initiator):
                 [
                     *ecc_signer.pk_x_uint256,
                     *ecc_signer.pk_y_uint256,
-                    3,  # secp256r1
+                    2,  # secp256r1
                     0,
                     0,
                 ],
@@ -2117,7 +2110,8 @@ async def test_multisig_allow_seed_to_swap_signers(init_contracts):
     swap_signers_calldata = [new_signer_id, *add_signer_payload]
 
     response = await ecc_signer_2.send_transactions(
-        account1, new_signer_id,
+        account1,
+        new_signer_id,
         [
             (account1.contract_address, "swap_signers", swap_signers_calldata),
         ],
@@ -2151,7 +2145,7 @@ async def test_multisig_allow_seed_to_swap_signers(init_contracts):
         ],
     )
     new_signer_id = response.call_info.retdata[2]
- 
+
 
 @pytest.mark.asyncio
 async def test_multisig_cancel_disable_with_etd(init_contracts):
