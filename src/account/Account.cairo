@@ -268,10 +268,18 @@ func isValidSignature{
     hash: felt,
     signature_len: felt, signature: felt*
 ) -> (isValid: felt) {
+    alloc_locals;
+    let (block_timestamp) = get_block_timestamp();
     Account._migrate_storage_if_needed();
+    Multisig.apply_elapsed_etd_requests(block_timestamp);
+    Signers.apply_elapsed_etd_requests(block_timestamp);
+    let (multisig_num_signers) = Multisig.get_multisig_num_signers();
+    let in_multisig_mode = is_not_zero(multisig_num_signers);
+    let (num_additional_signers) = Account_signers_num_hw_signers.read();
+    let in_hws_mode = is_not_zero(num_additional_signers);
 
-    let (isValid: felt) = Signers.is_valid_signature(
-        hash, signature_len, signature
+    let (isValid: felt) = Signers.is_valid_signature_for_mode(
+        hash, signature_len, signature, in_multisig_mode, in_hws_mode
     );
     return (isValid=isValid);
 }
@@ -452,16 +460,14 @@ func __validate_declare__{
     ecdsa_ptr: SignatureBuiltin*,
     range_check_ptr
 }(class_hash: felt) -> () {
-    let (num_additional_signers) = Account_signers_num_hw_signers.read();
-    let (num_multisig_signers) = Multisig_num_signers.read();
-    with_attr error_message("Account: declare not supported in non-seed modes") {
-        assert num_additional_signers + num_multisig_signers = 0;
-    }
     let (tx_info) = get_tx_info();
+    let (isValid) = isValidSignature(
+        tx_info.transaction_hash,
+        tx_info.signature_len,
+        tx_info.signature
+    );
     with_attr error_message("Account: declare invalid signature") {
-        Signers.is_valid_signature(
-            tx_info.transaction_hash, tx_info.signature_len, tx_info.signature
-        );
+        assert isValid = TRUE;
     }
     return ();
 }

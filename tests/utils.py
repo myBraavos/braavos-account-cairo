@@ -345,6 +345,15 @@ class TestECCSigner:
             TRANSACTION_VERSION,
             StarknetChainId.TESTNET.value,
         )
+        sig = [signer_id, *self.sign(message_hash)]
+        return await send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            execute_calldata,
+            signature=sig,
+        )
+
+    def sign(self, message_hash):
         message_hash_bytes = message_hash.to_bytes(
             (message_hash.bit_length() + 7) // 8, byteorder="big", signed=False
         )
@@ -353,13 +362,7 @@ class TestECCSigner:
             ec.ECDSA(Prehashed(hashes.SHAKE256(len(message_hash_bytes)))),
         )
         r, s = decode_dss_signature(sig)
-        return await send_raw_invoke(
-            account,
-            get_selector_from_name("__execute__"),
-            execute_calldata,
-            signature=[signer_id, *to_uint(r), *to_uint(s)],
-        )
-
+        return [*to_uint(r), *to_uint(s)]
 
 class TestSigner:
     def __init__(self, private_key):

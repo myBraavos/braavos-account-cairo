@@ -144,9 +144,17 @@ namespace Multisig {
         if (multisig_num_signers == 0) {
             return (multisig_deferred=FALSE);
         }
+        // we are in multisig mode, but sig contains both signers so don't defer
+        // note that at this point, the multi-signer sig was validated
+        let (multi_signers_len, multi_signers) = Signers.resolve_signers_from_sig(
+            tx_info.signature_len, tx_info.signature
+        );
+        if (multi_signers_len == 2) {
+            return (multisig_deferred=FALSE);
+        }
         let (block_timestamp) = get_block_timestamp();
         let (block_num) = get_block_number();
-        let (local current_signer) = Signers.resolve_signer_from_sig(tx_info.signature_len, tx_info.signature);
+        let current_signer = multi_signers[0];
 
         let (pending_multisig_txn: PendingMultisigTransaction) = Multisig_pending_transaction.read();
         tempvar is_disable_multisig_selector = 1 - is_not_zero(selector - DISABLE_MULTISIG_SELECTOR);
@@ -214,14 +222,16 @@ namespace Multisig {
                 assert is_not_zero(pending_multisig_transaction.transaction_hash) = TRUE;
             }
         }
-        let (current_signer) = Signers.resolve_signer_from_sig(
+
+        let (multi_signers_len, multi_signers) = Signers.resolve_signers_from_sig(
             tx_info.signature_len, tx_info.signature);
 
         // Let estimate fee pass for 2nd signer even when txn is still in RECEIVED state
         if (is_estfee == FALSE) {
             with_attr error_message("Multisig: multisig signer can only sign once") {
+                assert multi_signers_len = 1;
                 assert is_not_zero(
-                    current_signer.index - pending_multisig_transaction.signer_1_id) = TRUE;
+                   multi_signers[0].index - pending_multisig_transaction.signer_1_id) = TRUE;
             }
         }
 
@@ -257,7 +267,7 @@ namespace Multisig {
         assert [pendingTxnSignedEvtKeys]  = MultisigPendingTransactionSignedSelector;
         assert [pendingTxnSignedEvtKeys + 1] = computed_hash;
         let (local pendingTxnSignedEvtData: felt*) = alloc();
-        assert [pendingTxnSignedEvtData] = current_signer.index;
+        assert [pendingTxnSignedEvtData] = multi_signers[0].index;
         emit_event(2, pendingTxnSignedEvtKeys, 1, pendingTxnSignedEvtData);
 
         // Convert `AccountCallArray` to 'Call'
@@ -355,13 +365,12 @@ namespace Multisig {
         // For now we limit this API to seed signer only as it has no functional
         // meaning with secp256r1
         let (tx_info) = get_tx_info();
-        let (current_signer) = Signers.resolve_signer_from_sig(
-            tx_info.signature_len,
-            tx_info.signature
-        );
+        let (multi_signers_len, multi_signers) = Signers.resolve_signers_from_sig(
+            tx_info.signature_len, tx_info.signature);
         with_attr error_message(
             "Multisig: disable_multisig_with_etd should be called with seed signer") {
-            assert current_signer.signer.type = SIGNER_TYPE_STARK;
+            assert multi_signers_len = 1;
+            assert multi_signers[0].signer.type = SIGNER_TYPE_STARK;
         }
 
         // We dont want to allow endless postponement of etd removals, once
@@ -512,8 +521,14 @@ namespace Multisig {
             pending_multisig_txn,
             block_num, block_timestamp
         );
-        let (local current_signer) = Signers.resolve_signer_from_sig(
+
+        let (multi_signers_len, multi_signers) = Signers.resolve_signers_from_sig(
             tx_info.signature_len, tx_info.signature);
+        if (multi_signers_len == 2) {
+            return (valid=TRUE, is_multisig_mode=TRUE);
+        }
+
+        let current_signer = multi_signers[0];
 
         tempvar is_stark_signer = 1 - is_not_zero(
             current_signer.signer.type - SIGNER_TYPE_STARK);

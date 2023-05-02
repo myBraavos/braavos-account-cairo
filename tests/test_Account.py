@@ -1,12 +1,15 @@
 import asyncio
+from collections import namedtuple
 import pytest
 import pytest_asyncio
+from starkware.cairo.lang.vm.crypto import pedersen_hash
 from starkware.starknet.business_logic.state.state import BlockInfo
 from starkware.starknet.business_logic.transaction.objects import InternalDeclare
 from starkware.starknet.definitions.general_config import StarknetChainId
 from starkware.starknet.testing.starknet import Starknet
 from starkware.starknet.testing.starknet import StarknetContract
 from starkware.starknet.compiler.compile import get_selector_from_name
+
 from utils import (
     TestSigner,
     assert_revert,
@@ -16,11 +19,11 @@ from utils import (
     get_contract_def,
     parse_get_signers_response,
     to_uint,
+    send_raw_invoke,
     str_to_felt,
     TestECCSigner,
     flatten_seq,
 )
-from starkware.cairo.lang.vm.crypto import pedersen_hash
 
 IACCOUNT_ID = 0xF10DBD44
 
@@ -492,21 +495,6 @@ async def test_invalid_secp256r1_sig(init_module_scoped_secp256r1_accounts):
     invalid_rs = [0, 0, 2**139, 0]
     await assert_revert(
         account.is_valid_signature(hash, [signer_id, *invalid_rs]).call(),
-    )
-
-
-@pytest.mark.asyncio
-async def test_is_valid_sig_wrong_hash_stark_indexed(
-    init_module_scoped_starknet_account,
-):
-    _, account, signer, _, _, _ = init_module_scoped_starknet_account
-
-    hash = pedersen_hash(0x11111, 0x22222)
-    sig_r, sig_s = signer.signer.sign(hash)
-    wrong_hash = hash + 1
-    await assert_revert(
-        account.is_valid_signature(wrong_hash, [0, sig_r, sig_s]).call(),
-        "is invalid, with respect to the public key",
     )
 
 
@@ -1185,28 +1173,6 @@ async def test_initializer_fail_on_no_actual_impl(contract_defs):
 
 
 @pytest.mark.asyncio
-async def test_initializer_fail_on_no_actual_impl(contract_defs):
-    proxy_def, _, _, account_base_impl_def = contract_defs
-    starknet = await Starknet.empty()
-
-    account_base_impl_decl = await starknet.declare(
-        contract_class=account_base_impl_def,
-    )
-
-    await assert_revert(
-        deploy_account_txn(
-            starknet,
-            signer,
-            proxy_def,
-            account_base_impl_decl,
-            account_actual_impl=None,
-            hw_signer=None,
-        ),
-        "invalid actual implementation",
-    )
-
-
-@pytest.mark.asyncio
 async def test_set_multisig_basic_assertions(init_contracts):
     _, _, account1, _, _ = init_contracts
 
@@ -1523,6 +1489,57 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
     # pending should've been cleared
     execution_info = await account1.get_pending_multisig_transaction().call()
     assert execution_info.result.pending_multisig_transaction.transaction_hash == 0
+
+
+@pytest.mark.asyncio
+async def test_multisig_2_signers_in_single_sig(init_contracts):
+    _, _, account1, _, erc20 = init_contracts
+
+    ecc_signer = TestECCSigner()
+
+    response = await signer.send_transactions(
+        account1,
+        [
+            (
+                account1.contract_address,
+                "add_signer",
+                [
+                    *ecc_signer.pk_x_uint256,
+                    *ecc_signer.pk_y_uint256,
+                    2,  # secp256r1
+                    0,
+                    0,
+                ],
+            ),
+            (account1.contract_address, "set_multisig", [2]),
+        ],
+    )
+    signer_id = response.call_info.retdata[1]
+
+    # Prepare execute calldata for both signers to sign
+    calldata = [
+        1,
+        erc20.contract_address,
+        get_selector_from_name("balanceOf"),
+        0,
+        1,
+        1,
+        account1.contract_address
+    ]
+
+    signer_obj = namedtuple('SignerTuple', ['sign'])(lambda hash: [
+        0,
+        *signer.signer.sign(hash),
+        signer_id,
+        *ecc_signer.sign(hash)
+    ])
+    await send_raw_invoke(
+        account1,
+        get_selector_from_name("__execute__"),
+        calldata,
+        signer=signer_obj
+    )
+
 
 
 @pytest.mark.asyncio
@@ -2251,7 +2268,7 @@ async def test_multisig_cancel_disable_with_etd(init_contracts):
 
 
 @pytest.mark.asyncio
-async def test_block_declare_on_non_seed_modes(init_contracts, contract_defs):
+async def test_declare_validation(init_contracts, contract_defs):
     proxy_def, _, _, _ = contract_defs
     _, _, account1, _, _ = init_contracts
 
@@ -2262,15 +2279,13 @@ async def test_block_declare_on_non_seed_modes(init_contracts, contract_defs):
         "sender_address": account1.contract_address,
         "max_fee": 0,
         "version": 1,
-        "signature": [0, 0],
-    }  # In seed mode (prior to adding additional signer) we should be able to declare
-    # so failure will be on sig (due to dummy) and not guard
-    await assert_revert(
-        account1.state.execute_tx(
-            tx=InternalDeclare.create(**{**declare_tx_params, "nonce": 1})
-        ),
-        "declare invalid signature",
-    )
+        "signature": [],
+    }
+    declare_tx = InternalDeclare.create(**{**declare_tx_params, "nonce": 1})
+    seed_sig = signer.signer.sign(declare_tx.hash_value)
+    declare_tx.__dict__["signature"] = list(seed_sig)
+    # Seed mode
+    await account1.state.execute_tx(tx=declare_tx)
 
     ecc_signer = TestECCSigner()
     signer_payload = [
@@ -2280,14 +2295,74 @@ async def test_block_declare_on_non_seed_modes(init_contracts, contract_defs):
         0,
         0,
     ]
-    _ = await signer.send_transactions(
+    response = await signer.send_transactions(
         account1, [(account1.contract_address, "add_signer", signer_payload)]
     )
+    signer_id = response.call_info.retdata[1]
 
-    # Now dummy declare should fail on Guard
-    await assert_revert(
-        account1.state.execute_tx(
-            tx=InternalDeclare.create(**{**declare_tx_params, "nonce": 2})
-        ),
-        "declare not supported in non-seed modes",
+    # HWS mode
+    declare_tx = InternalDeclare.create(**{**declare_tx_params, "nonce": 3})
+    hws_sig = ecc_signer.sign(declare_tx.hash_value)
+    declare_tx.__dict__["signature"] = [signer_id, *hws_sig]
+    await account1.state.execute_tx(tx=declare_tx)
+
+    # Multisig mode
+    await ecc_signer.send_transactions(
+        account1, signer_id, [(account1.contract_address, "set_multisig", [2])]
     )
+    declare_tx = InternalDeclare.create(**{**declare_tx_params, "nonce": 5})
+    hws_sig = ecc_signer.sign(declare_tx.hash_value)
+    seed_sig = signer.signer.sign(declare_tx.hash_value)
+    declare_tx.__dict__["signature"] = [0, *list(seed_sig), signer_id, *hws_sig]
+    await account1.state.execute_tx(tx=declare_tx)
+
+@pytest.mark.asyncio
+async def test_is_valid_sig_for_mode(init_contracts):
+    _, _, account1, _, _ = init_contracts
+
+    test_hash = 0x1234
+    seed_sig = list(signer.signer.sign(test_hash))
+
+    # seed
+    exec_info = await account1.isValidSignature(test_hash, seed_sig).call()
+    assert exec_info.result.isValid == 1
+
+
+    ecc_signer = TestECCSigner()
+    signer_payload = [
+        *ecc_signer.pk_x_uint256,
+        *ecc_signer.pk_y_uint256,
+        2,  # secp256r1
+        0,
+        0,
+    ]
+    response = await signer.send_transactions(
+        account1, [(account1.contract_address, "add_signer", signer_payload)]
+    )
+    signer_id = response.call_info.retdata[1]
+
+    # HWS mode
+    # Fail on seed sig
+    exec_info = await account1.isValidSignature(test_hash, seed_sig).call()
+    assert exec_info.result.isValid == 0
+    # But succeed on HWS
+    hws_sig = ecc_signer.sign(test_hash)
+    exec_info = await account1.isValidSignature(test_hash, [signer_id, *hws_sig]).call()
+    assert exec_info.result.isValid == 1
+
+    # Multisig mode
+    await ecc_signer.send_transactions(
+        account1, signer_id, [(account1.contract_address, "set_multisig", [2])]
+    )
+    # Fail on seed sig
+    exec_info = await account1.isValidSignature(test_hash, seed_sig).call()
+    assert exec_info.result.isValid == 0
+    # Fail on HWS
+    hws_sig = ecc_signer.sign(test_hash)
+    exec_info = await account1.isValidSignature(test_hash, [signer_id, *hws_sig]).call()
+    assert exec_info.result.isValid == 0
+    # But succeed on Multisig
+    exec_info = await account1.isValidSignature(test_hash, [
+        0, *seed_sig, signer_id, *hws_sig]
+    ).call()
+    assert exec_info.result.isValid == 1
