@@ -207,7 +207,10 @@ func get_signers{
     pedersen_ptr: HashBuiltin*,
     range_check_ptr
 }() -> (signers_len: felt, signers: IndexedSignerModel*) {
+    alloc_locals;
+    let (block_timestamp) = get_block_timestamp();
     Account._migrate_storage_if_needed();
+    Signers.apply_elapsed_etd_requests(block_timestamp);
 
     return Signers.get_signers();
 }
@@ -218,7 +221,10 @@ func get_signer{
     pedersen_ptr: HashBuiltin*,
     range_check_ptr
 }(index: felt) -> (signer: SignerModel) {
+    alloc_locals;
+    let (block_timestamp) = get_block_timestamp();
     Account._migrate_storage_if_needed();
+    Signers.apply_elapsed_etd_requests(block_timestamp);
 
     return Signers.get_signer(index);
 }
@@ -229,6 +235,11 @@ func get_deferred_remove_signer_req{
     pedersen_ptr: HashBuiltin*,
     range_check_ptr
 }() -> (deferred_request: DeferredRemoveSignerRequest) {
+    alloc_locals;
+    let (block_timestamp) = get_block_timestamp();
+    Account._migrate_storage_if_needed();
+    Signers.apply_elapsed_etd_requests(block_timestamp);
+
     return Signers.get_deferred_remove_signer_req();
 }
 
@@ -273,6 +284,7 @@ func isValidSignature{
     Account._migrate_storage_if_needed();
     Multisig.apply_elapsed_etd_requests(block_timestamp);
     Signers.apply_elapsed_etd_requests(block_timestamp);
+
     let (multisig_num_signers) = Multisig.get_multisig_num_signers();
     let in_multisig_mode = is_not_zero(multisig_num_signers);
     let (num_additional_signers) = Account_signers_num_hw_signers.read();
@@ -292,6 +304,11 @@ func get_multisig{
     pedersen_ptr: HashBuiltin*,
     range_check_ptr
 } () -> (multisig_num_signers: felt) {
+    alloc_locals;
+    let (block_timestamp) = get_block_timestamp();
+    Account._migrate_storage_if_needed();
+    Multisig.apply_elapsed_etd_requests(block_timestamp);
+
     let (multisig_num_signers) = Multisig.get_multisig_num_signers();
     return (multisig_num_signers = multisig_num_signers);
 }
@@ -316,6 +333,11 @@ func get_pending_multisig_transaction{
     pedersen_ptr: HashBuiltin*,
     range_check_ptr
 } () -> (pending_multisig_transaction: PendingMultisigTransaction) {
+    alloc_locals;
+    let (block_timestamp) = get_block_timestamp();
+    Account._migrate_storage_if_needed();
+    Multisig.apply_elapsed_etd_requests(block_timestamp);
+
     let (pending_multisig_transaction) = Multisig.get_pending_multisig_transaction();
     return (pending_multisig_transaction = pending_multisig_transaction);
 }
@@ -368,6 +390,11 @@ func get_deferred_disable_multisig_req{
     pedersen_ptr: HashBuiltin*,
     range_check_ptr
 }() -> (deferred_request: DeferredMultisigDisableRequest) {
+    alloc_locals;
+    let (block_timestamp) = get_block_timestamp();
+    Account._migrate_storage_if_needed();
+    Multisig.apply_elapsed_etd_requests(block_timestamp);
+
     return Multisig.get_deferred_disable_multisig_req();
 }
 

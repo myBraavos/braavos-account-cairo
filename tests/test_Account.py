@@ -835,6 +835,14 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts):
         "unsupported signer type",
     )
 
+    # verify that getter takes expired etd into consideration
+    exec_info = await account1.get_signers().call()
+    all_signers = parse_get_signers_response(exec_info.call_info.result)
+    # Verify we have an hw signer
+    hw_signers = [x for x in all_signers if x[5] == 2]
+    assert len(hw_signers) == 0
+
+
     # 2. seed signer should work fine and pending removal should be triggered
     # 2.1. use seed signer to "get_signers" via __execute__
     response = await signer.send_transactions(
@@ -1990,6 +1998,10 @@ async def test_multisig_disable_with_etd(init_contracts):
     starknet.state.state.block_info = BlockInfo.create_for_testing(
         0, deferred_request.expire_at + 1
     )
+
+    # Check the getter also considers expired etd
+    exec_info = await account1.get_multisig().call()
+    assert exec_info.result.multisig_num_signers == 0
 
     # Deferred expired so we expect multisig to be removed, i.e. txn will execute as usual
     response = await signer.send_transactions(

@@ -573,7 +573,7 @@ namespace Signers {
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
         range_check_ptr,
-        ecdsa_ptr: SignatureBuiltin,
+        ecdsa_ptr: SignatureBuiltin*,
     } (
         hash: felt,
         signature_len: felt, signature: felt*,
