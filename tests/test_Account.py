@@ -2293,7 +2293,7 @@ async def test_declare_validation(init_contracts, contract_defs):
         "version": 1,
         "signature": [],
     }
-    declare_tx = InternalDeclare.create(**{**declare_tx_params, "nonce": 1})
+    declare_tx = InternalDeclare.create_deprecated(**{**declare_tx_params, "nonce": 1})
     seed_sig = signer.signer.sign(declare_tx.hash_value)
     declare_tx.__dict__["signature"] = list(seed_sig)
     # Seed mode
@@ -2313,7 +2313,7 @@ async def test_declare_validation(init_contracts, contract_defs):
     signer_id = response.call_info.retdata[1]
 
     # HWS mode
-    declare_tx = InternalDeclare.create(**{**declare_tx_params, "nonce": 3})
+    declare_tx = InternalDeclare.create_deprecated(**{**declare_tx_params, "nonce": 3})
     hws_sig = ecc_signer.sign(declare_tx.hash_value)
     declare_tx.__dict__["signature"] = [signer_id, *hws_sig]
     await account1.state.execute_tx(tx=declare_tx)
@@ -2322,7 +2322,7 @@ async def test_declare_validation(init_contracts, contract_defs):
     await ecc_signer.send_transactions(
         account1, signer_id, [(account1.contract_address, "set_multisig", [2])]
     )
-    declare_tx = InternalDeclare.create(**{**declare_tx_params, "nonce": 5})
+    declare_tx = InternalDeclare.create_deprecated(**{**declare_tx_params, "nonce": 5})
     hws_sig = ecc_signer.sign(declare_tx.hash_value)
     seed_sig = signer.signer.sign(declare_tx.hash_value)
     declare_tx.__dict__["signature"] = [0, *list(seed_sig), signer_id, *hws_sig]

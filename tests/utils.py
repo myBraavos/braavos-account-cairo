@@ -32,8 +32,6 @@ from starkware.starknet.definitions import constants
 from starkware.starknet.definitions.general_config import StarknetChainId
 from starkware.starknet.public.abi import get_selector_from_name
 from starkware.starkware_utils.error_handling import StarkException
-from starkware.starknet.business_logic.fact_state.state import ExecutionResourcesManager
-from starkware.starknet.business_logic.utils import calculate_tx_resources
 from starkware.starknet.services.api.gateway.transaction import InvokeFunction
 from starkware.starknet.services.utils.sequencer_api_utils import (
     InternalInvokeFunctionForSimulate,
@@ -310,7 +308,7 @@ async def send_raw_invoke(
     # Patch allow any version for testing
     InternalInvokeFunction.verify_version = lambda _: True
     tx = InternalInvokeFunction.create(
-        contract_address=account.contract_address,
+        sender_address=account.contract_address,
         entry_point_selector=selector,
         calldata=calldata,
         max_fee=0,
@@ -459,7 +457,7 @@ class TestSigner:
             (sig_r, sig_s) = self.signer.sign(tx_hash)
 
         tx = InternalInvokeFunction.create(
-            contract_address=account.contract_address,
+            sender_address=account.contract_address,
             entry_point_selector=selector,
             calldata=calldata,
             max_fee=0,
@@ -490,9 +488,10 @@ class TestSigner:
         )
 
         (sig_r, sig_s) = self.signer.sign(txn_hash)
+        InternalInvokeFunction.verify_version = lambda _: True
         internal_tx = InternalInvokeFunctionForSimulate.from_external(
             InvokeFunction(
-                contract_address=account.contract_address,
+                sender_address=account.contract_address,
                 calldata=execute_calldata,
                 version=EST_FEE_TRANSACTION_VERSION,
                 max_fee=0,

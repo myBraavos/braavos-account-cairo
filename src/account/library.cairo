@@ -164,13 +164,17 @@ namespace Account {
         // Data model migration comes here,
         // first version that calls this is b'000.000.006'
 
-        // b'000.000.007', b'000.000.008', b'000.000.009' - no migrations
+        // b'000.000.006' -->  b'000.000.009' - no migrations
+
+        // b'000.000.009' (tesnet only) --> b'000.000.010' migration
         with_attr error_message("Account: upgrade data migration failed") {
             if (from_version == '000.000.009') {
                 let (res) = Migrations.migrate_000_000_009();
                 assert res = TRUE;
             }
         }
+
+        // b'000.000.010' -> b'000.000.011' - no migrations
 
         return ();
     }
