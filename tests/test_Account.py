@@ -5,6 +5,7 @@ import pytest_asyncio
 from starkware.cairo.lang.vm.crypto import pedersen_hash
 from starkware.starknet.business_logic.state.state import BlockInfo
 from starkware.starknet.business_logic.transaction.objects import InternalDeclare
+from starkware.starknet.core.os.contract_class.deprecated_class_hash import compute_deprecated_class_hash
 from starkware.starknet.definitions.general_config import StarknetChainId
 from starkware.starknet.testing.starknet import Starknet
 from starkware.starknet.testing.starknet import StarknetContract
@@ -58,11 +59,11 @@ async def init_module_scoped_secp256r1_accounts(
     starknet = init_module_scoped_starknet
     proxy_def, account_def, _, account_base_impl_def = contract_defs
 
-    account_base_impl_decl = await starknet.declare(
+    account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def,
     )
 
-    account_decl = await starknet.declare(
+    account_decl = await starknet.deprecated_declare(
         contract_class=account_def,
     )
 
@@ -79,7 +80,7 @@ async def init_module_scoped_secp256r1_accounts(
         state=starknet.state,
         abi=proxy_def.abi,
         contract_address=account.contract_address,
-        deploy_call_info=call_info,
+        constructor_call_info=call_info,
     )
 
     signer_payload = [
@@ -110,11 +111,11 @@ async def init_module_scoped_starknet_account(
     starknet = init_module_scoped_starknet
     proxy_def, account_def, _, account_base_impl_def = contract_defs
 
-    account_base_impl_decl = await starknet.declare(
+    account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def,
     )
 
-    account_decl = await starknet.declare(
+    account_decl = await starknet.deprecated_declare(
         contract_class=account_def,
     )
 
@@ -127,15 +128,16 @@ async def init_module_scoped_starknet_account(
         state=starknet.state,
         abi=proxy_def.abi,
         contract_address=account.contract_address,
-        deploy_call_info=call_info,
+        constructor_call_info=call_info,
     )
 
     signer_type_id = 0
     signer_id = 0
 
     malicious_def = get_contract_def("tests/aux/Malicious.cairo")
+    malicious_decl = await starknet.deprecated_declare(contract_class=malicious_def)
     malicious_contract = await starknet.deploy(
-        contract_class=malicious_def, constructor_calldata=[]
+        class_hash=malicious_decl.class_hash, constructor_calldata=[]
     )
 
     return (
@@ -153,11 +155,11 @@ async def init_contracts(contract_defs):
     proxy_def, account_def, erc20_def, account_base_impl_def = contract_defs
     starknet = await Starknet.empty()
 
-    account_base_impl_decl = await starknet.declare(
+    account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def,
     )
 
-    account_decl = await starknet.declare(
+    account_decl = await starknet.deprecated_declare(
         contract_class=account_def,
     )
 
@@ -169,11 +171,12 @@ async def init_contracts(contract_defs):
         state=starknet.state,
         abi=proxy_def.abi,
         contract_address=account.contract_address,
-        deploy_call_info=call_info,
+        constructor_call_info=call_info,
     )
 
+    erc20_decl = await starknet.deprecated_declare(contract_class=erc20_def)
     erc20 = await starknet.deploy(
-        contract_class=erc20_def,
+        class_hash=erc20_decl.class_hash,
         constructor_calldata=[
             str_to_felt("TEST_TOKEN_1"),
             str_to_felt("TST1"),
@@ -1076,11 +1079,11 @@ async def test_initializer_no_secp256r1_signer(contract_defs):
     proxy_def, account_def, _, account_base_impl_def = contract_defs
     starknet = await Starknet.empty()
 
-    account_base_impl_decl = await starknet.declare(
+    account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def,
     )
 
-    account_actual_impl = await starknet.declare(
+    account_actual_impl = await starknet.deprecated_declare(
         contract_class=account_def,
     )
 
@@ -1092,7 +1095,7 @@ async def test_initializer_no_secp256r1_signer(contract_defs):
         state=starknet.state,
         abi=proxy_def.abi,
         contract_address=account.contract_address,
-        deploy_call_info=call_info,
+        constructor_call_info=call_info,
     )
 
     execution_info = await as_proxy_abi.get_implementation().call()
@@ -1113,11 +1116,11 @@ async def test_initializer_with_secp256r1_signer(contract_defs):
     signer_type_id = 2
     starknet = await Starknet.empty()
 
-    account_base_impl_decl = await starknet.declare(
+    account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def,
     )
 
-    account_actual_impl = await starknet.declare(
+    account_actual_impl = await starknet.deprecated_declare(
         contract_class=account_def,
     )
 
@@ -1143,7 +1146,7 @@ async def test_initializer_with_secp256r1_signer(contract_defs):
         state=starknet.state,
         abi=proxy_def.abi,
         contract_address=account.contract_address,
-        deploy_call_info=call_info,
+        constructor_call_info=call_info,
     )
 
     execution_info = await as_proxy_abi.get_implementation().call()
@@ -1163,7 +1166,7 @@ async def test_initializer_fail_on_no_actual_impl(contract_defs):
     proxy_def, _, _, account_base_impl_def = contract_defs
     starknet = await Starknet.empty()
 
-    account_base_impl_decl = await starknet.declare(
+    account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def,
     )
 

@@ -205,7 +205,7 @@ async def deploy_account_txn(
     hw_signer=None,
     salt=None,
 ):
-    proxy_decl = await starknet.declare(contract_class=proxy_def)
+    proxy_decl = await starknet.deprecated_declare(contract_class=proxy_def)
     salt = salt or stark_signer.public_key
 
     deploy_account_txn_ctor_calldata = [
@@ -266,7 +266,7 @@ async def deploy_account_txn(
             if account_actual_impl != None
             else account_base_impl.abi,
             contract_address=deploy_account_contract_address,
-            deploy_call_info=res.call_info,
+            constructor_call_info=res.call_info,
         ),
         res.call_info,
     )

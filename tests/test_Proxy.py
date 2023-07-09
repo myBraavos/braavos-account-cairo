@@ -4,6 +4,7 @@ import pytest_asyncio
 
 from starkware.cairo.lang.compiler.program import Program
 from starkware.cairo.lang.vm.crypto import pedersen_hash
+from starkware.starknet.core.os.contract_class.deprecated_class_hash import compute_deprecated_class_hash
 from starkware.starknet.public.abi import get_selector_from_name, starknet_keccak
 from starkware.starknet.compiler.compile import create_starknet_contract_class
 from starkware.starknet.testing.starknet import Starknet
@@ -42,10 +43,11 @@ async def proxy_init(contract_defs):
     proxy_def, account_def, account_base_impl_def = contract_defs
     starknet = await Starknet.empty()
 
-    account_base_impl_decl = await starknet.declare(
+    account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def, )
 
-    account_actual_impl = await starknet.declare(contract_class=account_def, )
+    account_actual_impl = await starknet.deprecated_declare(
+        contract_class=account_def, )
 
     account1, call_info = await deploy_account_txn(starknet, signer, proxy_def,
                                                    account_base_impl_decl,
@@ -55,7 +57,7 @@ async def proxy_init(contract_defs):
         state=starknet.state,
         abi=proxy_def.abi,
         contract_address=account1.contract_address,
-        deploy_call_info=call_info,
+        constructor_call_info=call_info,
     )
 
     account2, call_info = await deploy_account_txn(starknet, signer2,
@@ -67,7 +69,7 @@ async def proxy_init(contract_defs):
         state=starknet.state,
         abi=proxy_def.abi,
         contract_address=account2.contract_address,
-        deploy_call_info=call_info,
+        constructor_call_info=call_info,
     )
 
     return (starknet, account_actual_impl, account1, account2, proxy)
@@ -132,7 +134,7 @@ async def test_upgrade(proxy_init):
         account_class_w_ver = create_starknet_contract_class(
             program=Program.load(data=loaded_compiled_json["program"]),
             abi=loaded_compiled_json["abi"])
-        account_class_w_ver_decl = await starknet.declare(
+        account_class_w_ver_decl = await starknet.deprecated_declare(
             contract_class=account_class_w_ver, )
 
     # Verify only the the proxy admin (account1) can upgrade / migrate, by calling the proxy from another account
@@ -177,7 +179,7 @@ async def test_upgrade(proxy_init):
         state=starknet.state,
         abi=account_class_w_ver_decl.abi,
         contract_address=proxy.contract_address,
-        deploy_call_info=proxy.deploy_call_info,
+        constructor_call_info=proxy.constructor_call_info,
     )
 
     target_ver_felt = str_to_felt("111.111.111")
@@ -206,6 +208,81 @@ async def test_upgrade(proxy_init):
 
 
 @pytest.mark.asyncio
+async def test_upgrade_regenesis(proxy_init):
+    starknet, declaration, account1, account2, proxy = proxy_init
+
+    with open(
+            file=contract_path(
+                "tests/aux/Braavos_Account_with_ver_111.111.111.json"),
+            encoding="utf-8",
+    ) as f:
+        loaded_compiled_json = json.load(f)
+        account_class_w_ver = create_starknet_contract_class(
+            program=Program.load(data=loaded_compiled_json["program"]),
+            abi=loaded_compiled_json["abi"])
+        account_class_w_ver_decl = await starknet.deprecated_declare(
+            contract_class=account_class_w_ver, )
+
+    # Verify only the the proxy admin (account1) can upgrade / migrate, by calling the proxy from another account
+    await assert_revert(
+        signer2.send_transaction(
+            account2,
+            proxy.contract_address,
+            "upgrade",
+            [account_class_w_ver_decl.class_hash],
+        ),
+        "Proxy: caller is not admin",
+    )
+
+    await assert_revert(
+        signer2.send_transaction(account2, proxy.contract_address,
+                                 "migrate_storage", [0]),
+        "Proxy: caller is not admin",
+    )
+
+    execution_info = await proxy.get_implementation().call()
+    assert execution_info.result.implementation == declaration.class_hash
+
+    # TODO: replace with the real post-regenesis interface id
+    expected_erc165_id = 0xa66bd575
+
+    # Upgrade
+    tx_info = await signer.send_transaction(
+        account1,
+        proxy.contract_address,
+        "upgrade_regenesis",
+        [account_class_w_ver_decl.class_hash, expected_erc165_id],
+    )
+
+    assert_event_emitted(
+        tx_info,
+        from_address=proxy.contract_address,
+        keys="Upgraded",
+        data=[account_class_w_ver_decl.class_hash],
+    )
+
+    account_after_upgrade = StarknetContract(
+        state=starknet.state,
+        abi=account_class_w_ver_decl.abi,
+        contract_address=proxy.contract_address,
+        constructor_call_info=proxy.constructor_call_info,
+    )
+
+    target_ver_felt = str_to_felt("111.111.111")
+    execution_info = await account_after_upgrade.get_impl_version().call()
+    assert execution_info.result.res == target_ver_felt
+
+    storage_migration_var = await account_after_upgrade.state.state.get_storage_at(
+        account_after_upgrade.contract_address,
+        starknet_keccak(b"Account_storage_migration_version"),
+    )
+    assert storage_migration_var == target_ver_felt
+
+    # FIXME: NOTE TO REVIEWER - FAIL IF STILL EXISTS
+    # Add verification that replace class did work and upgraded to cairo 1
+
+
+@pytest.mark.asyncio
 async def test_upgrade_sn09_mult_signers_upgrade_migrate_to_sn010_and_txns(
         contract_defs, proxy_init):
     proxy_def, _, _ = contract_defs
@@ -220,12 +297,13 @@ async def test_upgrade_sn09_mult_signers_upgrade_migrate_to_sn010_and_txns(
         account_class_sn09_multi_signers = create_starknet_contract_class(
             program=Program.load(data=loaded_compiled_json["program"]),
             abi=loaded_compiled_json["abi"])
-        account_class_sn_09_multi_signers_decl = await starknet.declare(
+        account_class_sn_09_multi_signers_decl = await starknet.deprecated_declare(
             contract_class=account_class_sn09_multi_signers, )
 
     # Uses legacy deploy
+    proxy_chash = compute_deprecated_class_hash(proxy_def)
     proxy_multi_signers = await starknet.deploy(
-        contract_class=proxy_def,
+        class_hash=proxy_chash,
         constructor_calldata=[
             account_class_sn_09_multi_signers_decl.class_hash,
             get_selector_from_name("initializer"),
@@ -238,7 +316,7 @@ async def test_upgrade_sn09_mult_signers_upgrade_migrate_to_sn010_and_txns(
         state=starknet.state,
         abi=account_class_sn_09_multi_signers_decl.abi,
         contract_address=proxy_multi_signers.contract_address,
-        deploy_call_info=proxy_multi_signers.deploy_call_info,
+        constructor_call_info=proxy_multi_signers.constructor_call_info,
     )
 
     # Upgrade SN 0.9.X contract so we need to send txn v0
@@ -264,7 +342,7 @@ async def test_upgrade_sn09_mult_signers_upgrade_migrate_to_sn010_and_txns(
         state=starknet.state,
         abi=declaration.abi,
         contract_address=proxy_multi_signers.contract_address,
-        deploy_call_info=proxy_multi_signers.deploy_call_info,
+        constructor_call_info=proxy_multi_signers.constructor_call_info,
     )
 
     # Since it was a multi-signer contract, then we can use signer_id 0 directly
@@ -298,12 +376,13 @@ async def test_upgrade_sn09_prior_mult_signers_upgrade_migrate_to_sn010_and_txns
         account_class_before_multi_signers = create_starknet_contract_class(
             program=Program.load(loaded_compiled_json["program"]),
             abi=loaded_compiled_json["abi"])
-        account_class_before_multi_signers_decl = await starknet.declare(
+        account_class_before_multi_signers_decl = await starknet.deprecated_declare(
             contract_class=account_class_before_multi_signers, )
 
     # Uses legacy deploy
+    proxy_chash = compute_deprecated_class_hash(proxy_def)
     proxy_no_multi_signers = await starknet.deploy(
-        contract_class=proxy_def,
+        class_hash=proxy_chash,
         constructor_calldata=[
             account_class_before_multi_signers_decl.class_hash,
             get_selector_from_name("initializer"),
@@ -316,7 +395,7 @@ async def test_upgrade_sn09_prior_mult_signers_upgrade_migrate_to_sn010_and_txns
         state=starknet.state,
         abi=account_class_before_multi_signers_decl.abi,
         contract_address=proxy_no_multi_signers.contract_address,
-        deploy_call_info=proxy_no_multi_signers.deploy_call_info,
+        constructor_call_info=proxy_no_multi_signers.constructor_call_info,
     )
 
     # Upgrade SN 0.9.X contract so we need to send txn v0
@@ -345,7 +424,7 @@ async def test_upgrade_sn09_prior_mult_signers_upgrade_migrate_to_sn010_and_txns
         state=starknet.state,
         abi=declaration.abi,
         contract_address=proxy_no_multi_signers.contract_address,
-        deploy_call_info=proxy_no_multi_signers.deploy_call_info,
+        constructor_call_info=proxy_no_multi_signers.constructor_call_info,
     )
     # Before first txn we exepect @view functions to dry-run migrations themselves
     execution_info = await account_after_upgrade.get_execution_time_delay(
@@ -403,13 +482,14 @@ async def test_signer_type_3_migration_from_v000_000_009(
         account_class_with_type_3 = create_starknet_contract_class(
             program=Program.load(loaded_compiled_json["program"]),
             abi=loaded_compiled_json["abi"])
-        account_class_with_type_3_decl = await starknet.declare(
+        account_class_with_type_3_decl = await starknet.deprecated_declare(
             contract_class=account_class_with_type_3, )
 
-    account_base_impl_decl = await starknet.declare(
+    account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def, )
 
-    account_actual_impl = await starknet.declare(contract_class=account_def, )
+    account_actual_impl = await starknet.deprecated_declare(
+        contract_class=account_def, )
 
     ecc_signer = TestECCSigner()
     signer_payload = [

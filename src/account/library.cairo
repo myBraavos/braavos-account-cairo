@@ -9,12 +9,16 @@ from starkware.starknet.common.syscalls import (
     get_tx_info,
     library_call,
     TxInfo,
+    replace_class,
 )
 from starkware.cairo.common.math import assert_not_equal
 from starkware.cairo.common.math_cmp import is_not_zero
 from starkware.cairo.common.bool import TRUE, FALSE
 
-from lib.openzeppelin.upgrades.library import Proxy
+from lib.openzeppelin.upgrades.library import (
+    Proxy,
+    Upgraded,
+)
 from src.migrations.library import Migrations
 from src.signers.library import (
     Account_public_key,
@@ -114,6 +118,46 @@ namespace Account {
 
         Account_storage_migration_version.write(ACCOUNT_IMPL_VERSION);
         AccountInitialized.emit(public_key);
+        return ();
+    }
+
+    func upgrade_regenesis{
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr
+    }(new_implementation: felt, regenesis_account_id: felt) -> () {
+
+        let (calldata) = alloc();
+        assert [calldata] = regenesis_account_id;
+        let (retdata_size: felt, retdata: felt*) = library_call(
+            class_hash=new_implementation,
+            function_selector=SUPPORTS_INTERFACE_SELECTOR,
+            calldata_size=1,
+            calldata=calldata,
+        );
+
+        with_attr error_message(
+            "Account: Implementation does not support IACCOUNT_ID") {
+            assert retdata[0] = TRUE;
+        }
+
+        replace_class(new_implementation);
+
+        // Migrate data model (if necessary)
+        assert [calldata + 1] = ACCOUNT_IMPL_VERSION;
+        let (retdata_size: felt, retdata:felt*) = library_call(
+            class_hash=new_implementation,
+            function_selector=MIGRATE_STORAGE_SELECTOR,
+            calldata_size=1,
+            calldata=calldata + 1,
+        );
+
+        // FIXME: NOTE TO REVIEWER - FAIL CR IF STILL EXISTS
+        // EMIT STANDARD EVENT (OwnerChanged?) TO FIND THE ACCOUNT
+
+        // We are not going through proxy lib here, so emit the upgrade
+        // event here
+        Upgraded.emit(new_implementation);
         return ();
     }
 

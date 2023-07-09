@@ -88,6 +88,17 @@ func upgrade{
 }
 
 @external
+func upgrade_regenesis{
+    syscall_ptr: felt*,
+    pedersen_ptr: HashBuiltin*,
+    range_check_ptr
+}(new_implementation: felt, regenesis_account_id: felt) -> () {
+    Proxy.assert_only_admin();
+    Account.upgrade_regenesis(new_implementation, regenesis_account_id);
+    return ();
+}
+
+@external
 func migrate_storage{
     syscall_ptr: felt*,
     pedersen_ptr: HashBuiltin*,

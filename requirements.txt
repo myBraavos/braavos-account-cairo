@@ -1,4 +1,4 @@
-cairo-lang==0.11.0.2
+cairo-lang==0.11.2
 cairo-nile==0.14.0
 cryptography==38.0.1
 pytest==7.2.0
