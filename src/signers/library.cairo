@@ -5,15 +5,26 @@ from starkware.cairo.common.bool import TRUE, FALSE
 from starkware.cairo.common.cairo_builtins import HashBuiltin, SignatureBuiltin
 from starkware.cairo.common.cairo_secp.bigint import uint256_to_bigint
 from starkware.cairo.common.cairo_secp.ec import EcPoint
+from starkware.cairo.common.default_dict import (
+    default_dict_new,
+    default_dict_finalize,
+)
+from starkware.cairo.common.dict import dict_read, dict_write
+from starkware.cairo.common.dict_access import DictAccess
 from starkware.cairo.common.math import (
+    assert_le,
+    assert_lt,
     assert_not_equal,
     assert_not_zero,
     split_felt,
+    unsigned_div_rem,
 )
-from starkware.cairo.common.math_cmp import is_le, is_not_zero
+from starkware.cairo.common.math_cmp import is_le, is_le_felt, is_not_zero
+from starkware.cairo.common.memcpy import memcpy
 from starkware.cairo.common.signature import verify_ecdsa_signature
 from starkware.cairo.common.uint256 import Uint256, uint256_check
 from starkware.starknet.common.syscalls import (
+    call_contract,
     get_block_timestamp,
     get_tx_info,
     TxInfo,
@@ -22,11 +33,15 @@ from starkware.starknet.common.syscalls import (
 from lib.secp256r1.src.secp256r1.ec import verify_point
 from lib.secp256r1.src.secp256r1.signature import verify_secp256r1_signature
 from src.utils.constants import (
+    ACCOUNT_MOA_DAILY_TXN_LIMIT,
+    GET_PUBLIC_KEY_SELECTOR,
+    IS_VALID_SIGNATURE_SELECTOR,
     NATIVE_STARK_SIG_LEN,
     STARK_SIG_LEN,
     SECP256R1_UINT256_SIG_LEN,
     STARK_PLUS_SECP256R1_SIG_LEN,
     REMOVE_SIGNER_WITH_ETD_SELECTOR,
+    SIGNER_TYPE_EXTERNAL_ACCOUNT,
     SIGNER_TYPE_SECP256R1,
     SIGNER_TYPE_STARK,
     SIGNER_TYPE_UNUSED,
@@ -92,6 +107,15 @@ func Account_signers_num_hw_signers() -> (res: felt) {
 func Account_deferred_remove_signer() -> (res: DeferredRemoveSignerRequest) {
 }
 
+@storage_var
+func Signers_num_ext_account_signers() -> (res: felt) {
+}
+
+@storage_var
+func Signers_signer_daily_transaction_count(signer_id: felt, day_start_timestamp: felt) -> (
+    num_of_daily_txns: felt) {
+}
+
 namespace Signers {
 
     func get_signers{
@@ -142,6 +166,26 @@ namespace Signers {
         }
     }
 
+    func populate_ext_account_signer_addresses_dict{
+        dict_ptr: DictAccess*,
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr,
+    }(current_id: felt, max_id: felt) -> () {
+        if (current_id == max_id + 1) {
+            return ();
+        }
+
+        let (curr_signer) = Account_signers.read(current_id);
+        if (curr_signer.type == SIGNER_TYPE_EXTERNAL_ACCOUNT) {
+            dict_write(key=curr_signer.signer_0, new_value=1);
+            return populate_ext_account_signer_addresses_dict(current_id + 1, max_id);
+        } else {
+            return populate_ext_account_signer_addresses_dict(current_id + 1, max_id);
+        }
+
+    }
+
     func get_signer{
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
@@ -157,7 +201,11 @@ namespace Signers {
         pedersen_ptr: HashBuiltin*,
         range_check_ptr
     }(signer: SignerModel) -> (signer_id: felt) {
-        // For now we only support adding 1 additional secp256r1 signer and that's it
+        with_attr error_message("Signers: cannot add secp256r1 signer together with external account signers") {
+            let (num_ext_signers) = Signers_num_ext_account_signers.read();
+            assert num_ext_signers = 0;
+        }
+
         with_attr error_message("Signers: can only add 1 secp256r1 signer") {
             assert signer.type = SIGNER_TYPE_SECP256R1;
             let (num_hw_signers) = Account_signers_num_hw_signers.read();
@@ -185,6 +233,99 @@ namespace Signers {
         SignerAdded.emit(avail_id, signer);
         return (signer_id=avail_id);
     }
+
+    func add_external_account_signers {
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr
+    }(
+        ext_signer_addresses_len: felt,
+        ext_signer_addresses: felt*,
+    ) -> (num_ext_account_signers: felt) {
+        alloc_locals;
+
+        with_attr error_message("Signers: cannot add external account signers together with secp256r1 signer") {
+            let (num_hw_signers) = Account_signers_num_hw_signers.read();
+            assert num_hw_signers = 0;
+        }
+
+        with_attr error_message("Signers: must have at least 2 external account signers") {
+            let (num_ext_signers) = Signers_num_ext_account_signers.read();
+            let have_ext_signers = is_not_zero(num_ext_signers);
+            // if have_ext_signers assert len > 0 else assert len > 1
+            assert_lt(1 - have_ext_signers, ext_signer_addresses_len);
+        }
+
+        let (local max_id) = Account_signers_max_index.read();
+        let (local ext_addresses_dict_start: DictAccess*) = default_dict_new(0);
+        let ext_addresses_dict = ext_addresses_dict_start;
+        populate_ext_account_signer_addresses_dict{dict_ptr=ext_addresses_dict}(0, max_id);
+        _add_external_account_signers_inner{dict_ptr=ext_addresses_dict}(ext_signer_addresses_len, ext_signer_addresses, max_id);
+        let (num_ext_signers_orig) = Signers_num_ext_account_signers.read();
+        let num_ext_signers = num_ext_signers_orig + ext_signer_addresses_len;
+        Signers_num_ext_account_signers.write(num_ext_signers);
+        default_dict_finalize(
+            ext_addresses_dict_start,
+            ext_addresses_dict,
+            0
+        );
+
+        Account_signers_max_index.write(max_id + ext_signer_addresses_len);
+
+        return (num_ext_signers,);
+    }
+
+    func _add_external_account_signers_inner {
+        dict_ptr: DictAccess*,
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr
+    }(
+        ext_signer_addresses_len: felt,
+        ext_signer_addresses: felt*,
+        curr_max_signer_id: felt,
+    ) -> () {
+        if (ext_signer_addresses_len == 0) {
+            return ();
+        }
+
+        let (address_exists: felt) = dict_read(key=ext_signer_addresses[0]);
+
+        with_attr error_message("Signers: external account signer address already exists") {
+            assert address_exists = 0;
+        }
+
+        tempvar _empty_calldata = new ();
+        with_attr error_message("Signers: error calling external signer's get_public_key") {
+            let get_pub_key_res = call_contract(
+                contract_address=ext_signer_addresses[0],
+                function_selector=GET_PUBLIC_KEY_SELECTOR,
+                calldata_size=0,
+                calldata=_empty_calldata,
+            );
+
+            assert get_pub_key_res.retdata_size = 1;
+        }
+
+        let ext_account_signer = SignerModel(
+            signer_0 = ext_signer_addresses[0],
+            signer_1 = get_pub_key_res.retdata[0],
+            signer_2 = 0,
+            signer_3 = 0,
+            type = SIGNER_TYPE_EXTERNAL_ACCOUNT,
+            reserved_0 = 0,
+            reserved_1 = 0,
+        );
+
+        let avail_id = curr_max_signer_id + 1;
+        Account_signers.write(avail_id, ext_account_signer);
+        dict_write(key=ext_signer_addresses[0], new_value=1);
+
+        SignerAdded.emit(avail_id, ext_account_signer);
+        return _add_external_account_signers_inner(ext_signer_addresses_len - 1,
+            ext_signer_addresses + 1, curr_max_signer_id + 1);
+    }
+
 
     func swap_signers{
         syscall_ptr: felt*,
@@ -234,6 +375,61 @@ namespace Signers {
         let (added_signer_id) = add_signer(added_signer);
 
         return (signer_id=added_signer_id);
+    }
+
+    func _remove_external_account_signers_inner{
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr
+    }(
+        remove_signer_ids_len: felt, remove_signer_ids: felt*,
+    ) -> () {
+        if (remove_signer_ids_len == 0) {
+            return ();
+        }
+
+        let current_signer_id = remove_signer_ids[0];
+        let (removed_signer) = Account_signers.read(remove_signer_ids[0]);
+        with_attr error_message("Signers: tried removing invalid signer") {
+            assert removed_signer.type = SIGNER_TYPE_EXTERNAL_ACCOUNT;
+        }
+
+        Account_signers.write(
+            current_signer_id,
+            SignerModel(
+            signer_0=SIGNER_TYPE_UNUSED,
+            signer_1=SIGNER_TYPE_UNUSED,
+            signer_2=SIGNER_TYPE_UNUSED,
+            signer_3=SIGNER_TYPE_UNUSED,
+            type=SIGNER_TYPE_UNUSED,
+            reserved_0=SIGNER_TYPE_UNUSED,
+            reserved_1=SIGNER_TYPE_UNUSED
+            ),
+        );
+
+        SignerRemoved.emit(current_signer_id);
+        return _remove_external_account_signers_inner(remove_signer_ids_len - 1, remove_signer_ids + 1);
+    }
+
+
+    func remove_external_account_signers{
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr
+    }(
+        remove_signer_ids_len: felt, remove_signer_ids: felt*,
+    ) -> (res: felt) {
+        alloc_locals;
+        let (num_ext_account_signers) = Signers_num_ext_account_signers.read();
+        local num_after_removal = num_ext_account_signers - remove_signer_ids_len;
+        with_attr error_message("Signers: invalid amount of removed external account signers") {
+            assert_le(2, num_after_removal);
+        }
+
+        _remove_external_account_signers_inner(remove_signer_ids_len, remove_signer_ids);
+        Signers_num_ext_account_signers.write(num_after_removal);
+
+        return (num_after_removal,);
     }
 
     func remove_signer{
@@ -329,6 +525,46 @@ namespace Signers {
         return ();
     }
 
+    func resolve_external_signers_from_sig_inner{
+        dict_ptr: DictAccess*, // signer_ids_dict - use dict_ptr to re-use dict_read/write implicit
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr
+    }(
+        signature_len: felt,
+        signature: felt*,
+        signers_len: felt,
+        signers: IndexedSignerModel*,
+    ) -> (signers_len: felt) {
+        if (signature_len == 0) {
+            return (signers_len,);
+        }
+        let signer_id = signature[0];
+        let (signer) = Account_signers.read(signer_id);
+        with_attr error_message("Signers: expected external account signer") {
+            assert signer.type = SIGNER_TYPE_EXTERNAL_ACCOUNT;
+        }
+
+        let (id_exists: felt) = dict_read(key=signer_id);
+        with_attr error_message("Signers: duplicate external account signer id in signature") {
+            assert id_exists = FALSE;
+        }
+        dict_write(key=signer_id, new_value=1);
+
+        assert signers[0] = IndexedSignerModel(
+            index=signature[0],
+            signer=signer,
+        );
+        let signer_sig_length = signature[1];
+        return resolve_external_signers_from_sig_inner(
+            signature_len=signature_len - signer_sig_length - 2,
+            signature=signature + signer_sig_length + 2,
+            signers_len=signers_len + 1,
+            signers=signers + IndexedSignerModel.SIZE,
+        );
+
+    }
+
     func resolve_signers_from_sig{
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
@@ -339,6 +575,26 @@ namespace Signers {
     ) -> (signers_len: felt, signers: IndexedSignerModel*) {
         alloc_locals;
         let res: IndexedSignerModel* = alloc();
+        let (local num_ext_account_signers) = Signers_num_ext_account_signers.read();
+        if (is_not_zero(num_ext_account_signers) == TRUE) {
+            with_attr error_message("Signers: invalid external account signer signature") {
+                // 1 signer idx + 2 felts (r,s) + (n > 0) felts for is_valid_sig call
+                assert_le(4, signature_len);
+                let (local signer_ids_dict_start: DictAccess*) = default_dict_new(0);
+                let signer_ids_dict = signer_ids_dict_start;
+                let (signers_len) = resolve_external_signers_from_sig_inner{
+                    dict_ptr=signer_ids_dict}(
+                    signature_len=signature_len - 3,
+                    signature=signature + 3,
+                    signers_len=0,
+                    signers=res,
+                );
+                default_dict_finalize(signer_ids_dict_start, signer_ids_dict, 0);
+                assert_le(1, signers_len);
+            }
+            return (signers_len=signers_len, signers=res);
+        }
+
         // "native" stark signature
         if (signature_len == NATIVE_STARK_SIG_LEN) {
             let (seed_signer) = Account_signers.read(0);
@@ -421,6 +677,38 @@ namespace Signers {
         return ();
     }
 
+    func verify_and_update_daily_txn_count{
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr,
+    }(
+        have_ext_account_signers: felt,
+        multi_signers_len: felt,
+        signer_id: felt,
+        block_timestamp: felt
+    ) -> () {
+        tempvar should_verify_and_update  = have_ext_account_signers * (
+            1 - is_not_zero(multi_signers_len - 1));
+        if (should_verify_and_update == FALSE) {
+            return ();
+        }
+
+        let (day_since_epoch, _) = unsigned_div_rem(block_timestamp, 86400);
+        let (signer_num_txns) = Signers_signer_daily_transaction_count.read(
+                signer_id, day_since_epoch);
+        with_attr error_message("Signers: daily transaction limit exceeded") {
+            assert is_le(signer_num_txns, ACCOUNT_MOA_DAILY_TXN_LIMIT - 1) = TRUE;
+        }
+
+        Signers_signer_daily_transaction_count.write(
+            signer_id,
+            day_since_epoch,
+            signer_num_txns + 1,
+        );
+
+        return ();
+    }
+
     func signers_validate{
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
@@ -431,8 +719,10 @@ namespace Signers {
         calldata_len: felt, calldata: felt*,
         tx_info: TxInfo*, block_timestamp: felt, block_num: felt, is_estfee: felt,
         multi_signers_len: felt, multi_signers: IndexedSignerModel*,
-        in_multisig_mode: felt, num_secp256r1_signers: felt,
+        in_multisig_mode, num_secp256r1_signers: felt, num_ext_account_signers: felt,
     ) -> (valid: felt) {
+        alloc_locals;
+        local have_ext_account_signers = is_not_zero(num_ext_account_signers);
         // Authorize Signer
         _authorize_signer(
             tx_info.account_contract_address,
@@ -441,7 +731,14 @@ namespace Signers {
             block_timestamp,
             in_multisig_mode,
             multi_signers_len, multi_signers,
-            num_secp256r1_signers,
+            num_secp256r1_signers, have_ext_account_signers,
+        );
+
+        verify_and_update_daily_txn_count(
+            have_ext_account_signers,
+            multi_signers_len,
+            multi_signers[0].index,
+            block_timestamp
         );
 
         // For estimate fee txns we skip sig validation - client side should account for it
@@ -472,7 +769,7 @@ namespace Signers {
         block_timestamp: felt,
         in_multisig_mode: felt,
         multi_signers_len: felt, multi_signers: IndexedSignerModel*,
-        num_secp256r1_signers: felt,
+        num_secp256r1_signers: felt, have_ext_account_signers: felt,
     ) -> () {
         alloc_locals;
 
@@ -557,6 +854,52 @@ namespace Signers {
         return (is_valid=TRUE);
     }
 
+    func is_valid_external_account_signers_signature{
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr,
+        ecdsa_ptr: SignatureBuiltin*,
+    }(
+        signers_len: felt,
+        signers: IndexedSignerModel*,
+        hash: felt,
+        signature_len: felt, signature: felt*
+    ) -> (is_valid: felt) {
+        alloc_locals;
+        if (signers_len == 0) {
+            return (is_valid=TRUE);
+        }
+        // We have [ext_signer_id, sig_len, sig.., ext_signer_id, sig_len, sig..., and so on]
+        // skip signer_id and signer extraction from sig we already got it in signers obj
+        let signer_sig_len = signature[1];
+
+        let (local calldata: felt*) = alloc();
+        assert calldata[0] = hash;
+        assert calldata[1] = signer_sig_len;
+        let calldata_ptr = &calldata[2];
+        memcpy(calldata_ptr, signature + 2, signer_sig_len);
+        let res = call_contract(
+            contract_address=signers[0].signer.signer_0,
+            function_selector=IS_VALID_SIGNATURE_SELECTOR,
+            calldata_size=signer_sig_len + 2,
+            calldata=calldata,
+        );
+
+        assert res.retdata_size = 1;
+
+        if (res.retdata[0] != TRUE) {
+            return (is_valid=FALSE);
+        }
+
+        return is_valid_external_account_signers_signature(
+            signers_len=signers_len - 1,
+            signers=signers + IndexedSignerModel.SIZE,
+            hash=hash,
+            signature_len=signature_len - 2 - signer_sig_len,
+            signature=signature + 2 + signer_sig_len,
+        );
+    }
+
     func is_valid_signature_for_mode{
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
@@ -567,6 +910,7 @@ namespace Signers {
         signature_len: felt, signature: felt*,
         multisig_num_signers: felt,
         have_secp256r1_signer: felt,
+        have_ext_account_signer: felt,
     ) -> (is_valid: felt) {
         let (multi_signers_len , multi_signers) = resolve_signers_from_sig(
                 signature_len, signature);
@@ -577,15 +921,25 @@ namespace Signers {
 
         // only 1 of the _sig params will be assigned 1 and will choose the correct
         // condition below
-        if ((is_stark_sig * (1 - have_secp256r1_signer) +
+        if ((1 - have_ext_account_signer) * (
+            (is_stark_sig * (1 - have_secp256r1_signer) +
             is_secp256r1_sig * (1 - in_multisig_mode) +
-            is_multisig_sig * in_multisig_mode) == TRUE) {
+            is_multisig_sig * in_multisig_mode)) == TRUE) {
             return is_valid_signature(
                 hash,
                 signature_len, signature,
                 multi_signers_len, multi_signers,
             );
         }
+
+        if (have_ext_account_signer * is_le(multisig_num_signers, multi_signers_len) == TRUE) {
+            return is_valid_external_account_signers_signature(
+                multi_signers_len, multi_signers,
+                hash,
+                signature_len - 3, signature + 3,
+            );
+        }
+
 
         return (is_valid = FALSE);
     }
@@ -647,12 +1001,67 @@ namespace Signers {
             return (is_valid=TRUE);
         }
 
+        if (multi_signers[0].signer.type == SIGNER_TYPE_EXTERNAL_ACCOUNT) {
+            let (ext_signers_sig_preamble_signer) = Account_signers.read(signature[0]);
+            with_attr error_message("Signers: invalid signature") {
+                assert ext_signers_sig_preamble_signer.type = SIGNER_TYPE_EXTERNAL_ACCOUNT;
+            }
+            // Since we can't call is_valid_signature from validate
+            // we validate stark sig of external account to prevent DOS
+            // calling is_valid_signature on the external signer/s is done
+            // in multisig_execute via is_valid_external_account_signers_signature
+            _is_valid_stark_signature(
+                ext_signers_sig_preamble_signer.signer_1,
+                hash,
+                signature_len - 1, signature + 1,
+            );
+
+            return (is_valid=TRUE);
+        }
+
+
+
         // Unsupported signer type!
         with_attr error_message("Signers: unsupported signer type") {
             assert_not_zero(0);
         }
 
         return (is_valid=FALSE);
+    }
+
+    func signers_execute{
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr,
+        ecdsa_ptr: SignatureBuiltin*,
+    }(tx_info: TxInfo*) -> (res: felt) {
+        let (num_ext_account_signers) = Signers_num_ext_account_signers.read();
+
+        if (num_ext_account_signers == 0) {
+            return (TRUE,);
+        }
+
+        // Skip validation in estimate fee
+        if (is_le_felt(TX_VERSION_1_EST_FEE, tx_info.version) == TRUE) {
+            return (TRUE,);
+        }
+
+        let (multi_signers_len, multi_signers) = resolve_signers_from_sig(
+            tx_info.signature_len, tx_info.signature
+        );
+        with_attr error_message("Signers: invalid external account signers signature") {
+            assert_le(1, multi_signers_len);
+            let (is_valid) = is_valid_external_account_signers_signature(
+                signers_len=multi_signers_len,
+                signers=multi_signers,
+                hash=tx_info.transaction_hash,
+                signature_len=tx_info.signature_len - 3, // remove ext signer seed preamble
+                signature=tx_info.signature + 3,
+            );
+            assert is_valid = TRUE;
+        }
+
+        return (TRUE,);
     }
 
 }

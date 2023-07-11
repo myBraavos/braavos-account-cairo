@@ -31,6 +31,7 @@ from src.utils.constants import (
     ACCOUNT_DEFAULT_EXECUTION_TIME_DELAY_SEC,
     ACCOUNT_IMPL_VERSION,
     ADD_SIGNER_SELECTOR,
+    ASSERT_EXPECTED_MAX_FEE_SELECTOR,
     CANCEL_DEFERRED_DISABLE_MULTISIG_REQ_SELECTOR,
     CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR,
     DISABLE_MULTISIG_SELECTOR,
@@ -42,6 +43,7 @@ from src.utils.constants import (
     SET_MULTISIG_SELECTOR,
     REMOVE_SIGNER_SELECTOR,
     REMOVE_SIGNER_WITH_ETD_SELECTOR,
+    SIGN_PENDING_MULTISIG_TXN_SELECTOR,
     SIGNER_TYPE_STARK,
     SUPPORTS_INTERFACE_SELECTOR,
 )
@@ -231,43 +233,57 @@ namespace Account {
     }
 
     func assert_multicall_valid(
-        self: felt, call_array_len: felt, call_array: AccountCallArray*
+        self: felt,
+        call_array_len: felt,
+        call_array: AccountCallArray*,
+        num_ext_account_signers: felt,
     ) -> () {
 
+        // if first call is max fee validation in ext account signers mode
+        // then shift calls by 1. See Multisig.multisig_validate() for details
+        tempvar have_ext_account_signers = is_not_zero(num_ext_account_signers);
+        tempvar calls_offset = have_ext_account_signers * (
+            1 - is_not_zero(is_not_zero([call_array].selector - ASSERT_EXPECTED_MAX_FEE_SELECTOR) + is_not_zero([call_array].to - self))
+        );
+        let actual_call_array_len = call_array_len - calls_offset;
+        let actual_call_array = call_array + calls_offset;
+
         // A single call is allowed to anywhere
-        if (call_array_len == 1) {
+        if (actual_call_array_len == 1) {
             return ();
         }
 
         with_attr error_message("Account: multicall with subsequent call to self") {
-            // Allowed "call-to-self" multicall combinations
-            if ((1 - is_not_zero(call_array_len - 2)) *
-                (1 - is_not_zero(call_array[0].to - self)) *
-                (1 - is_not_zero(call_array[1].to - self)) == TRUE) {
+            // Allowed "call-to-self" multicall combinations, none are relevant to
+            // ext account signer
+            if ((1 - have_ext_account_signers) * (
+                (1 - is_not_zero(actual_call_array_len - 2)) *
+                (1 - is_not_zero(actual_call_array[0].to - self)) *
+                (1 - is_not_zero(actual_call_array[1].to - self))) == TRUE) {
                 // add_signer -> set_multisig
-                tempvar as_sm = (1 - is_not_zero(call_array[0].selector - ADD_SIGNER_SELECTOR)) *
-                    (1 - is_not_zero(call_array[1].selector - SET_MULTISIG_SELECTOR));
+                tempvar as_sm = (1 - is_not_zero(actual_call_array[0].selector - ADD_SIGNER_SELECTOR)) *
+                    (1 - is_not_zero(actual_call_array[1].selector - SET_MULTISIG_SELECTOR));
                 // disable_multisig -> remove_signer
-                tempvar dm_rs = (1 - is_not_zero(call_array[0].selector - DISABLE_MULTISIG_SELECTOR)) *
-                    (1 - is_not_zero(call_array[1].selector - REMOVE_SIGNER_SELECTOR));
+                tempvar dm_rs = (1 - is_not_zero(actual_call_array[0].selector - DISABLE_MULTISIG_SELECTOR)) *
+                    (1 - is_not_zero(actual_call_array[1].selector - REMOVE_SIGNER_SELECTOR));
                 // disable_multisig_with_etd -> remove_signer_with_etd
-                tempvar dmwe_rswe = (1 - is_not_zero(call_array[0].selector - DISABLE_MULTISIG_WITH_ETD_SELECTOR)) *
-                    (1 - is_not_zero(call_array[1].selector - REMOVE_SIGNER_WITH_ETD_SELECTOR));
+                tempvar dmwe_rswe = (1 - is_not_zero(actual_call_array[0].selector - DISABLE_MULTISIG_WITH_ETD_SELECTOR)) *
+                    (1 - is_not_zero(actual_call_array[1].selector - REMOVE_SIGNER_WITH_ETD_SELECTOR));
                 // cancel_deferred_disable_multisig_req -> cancel_deferred_remove_signer_req
-                tempvar cdrsr_cddmr = (1 - is_not_zero(call_array[0].selector - CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR)) *
-                    (1 - is_not_zero(call_array[1].selector - CANCEL_DEFERRED_DISABLE_MULTISIG_REQ_SELECTOR));
+                tempvar cdrsr_cddmr = (1 - is_not_zero(actual_call_array[0].selector - CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR)) *
+                    (1 - is_not_zero(actual_call_array[1].selector - CANCEL_DEFERRED_DISABLE_MULTISIG_REQ_SELECTOR));
                 // disable_multisig -> cancel_deferred_remove_signer_req
-                tempvar dm_cdrsr = (1 - is_not_zero(call_array[0].selector - DISABLE_MULTISIG_SELECTOR)) *
-                    (1 - is_not_zero(call_array[1].selector - CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR));
+                tempvar dm_cdrsr = (1 - is_not_zero(actual_call_array[0].selector - DISABLE_MULTISIG_SELECTOR)) *
+                    (1 - is_not_zero(actual_call_array[1].selector - CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR));
                 // cancel_deferred_remove_signer_req -> set_multisig
-                tempvar cdrsr_sm = (1 - is_not_zero(call_array[0].selector - CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR)) *
-                    (1 - is_not_zero(call_array[1].selector - SET_MULTISIG_SELECTOR));
+                tempvar cdrsr_sm = (1 - is_not_zero(actual_call_array[0].selector - CANCEL_DEFERRED_REMOVE_SIGNER_REQ_SELECTOR)) *
+                    (1 - is_not_zero(actual_call_array[1].selector - SET_MULTISIG_SELECTOR));
 
                 // OR between allowed combinations
                 // specific combination == TRUE iff selectors in combination match call array
                 assert as_sm + dm_rs + dmwe_rswe + cdrsr_cddmr + dm_cdrsr + cdrsr_sm = 1;
             } else {
-                _assert_multicall_valid_inner(self, call_array_len, call_array);
+                _assert_multicall_valid_inner(self, actual_call_array_len, actual_call_array);
             }
         }
 
@@ -421,6 +437,7 @@ namespace Account {
         call_array_len: felt, call_array: AccountCallArray*,
         calldata_len: felt, calldata: felt*,
         tx_info: TxInfo*,
+        num_ext_account_signers: felt,
     ) -> (valid: felt) {
         with_attr error_message("Account: no calls provided") {
             let have_calls = is_not_zero(call_array_len);
@@ -430,7 +447,8 @@ namespace Account {
         // Be defensive about dapps trying to trick the user into signing
         // subsequent account related transactions
         assert_multicall_valid(
-                tx_info.account_contract_address, call_array_len, call_array
+                tx_info.account_contract_address, call_array_len, call_array,
+                num_ext_account_signers,
         );
 
         return (valid=TRUE);

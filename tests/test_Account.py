@@ -1,12 +1,17 @@
 import asyncio
 from collections import namedtuple
+from dataclasses import replace
+from datetime import datetime
 import pytest
 import pytest_asyncio
+import random
+
 from starkware.cairo.lang.vm.crypto import pedersen_hash
 from starkware.starknet.business_logic.state.state import BlockInfo
+from starkware.starknet.business_logic.state.storage_domain import StorageDomain
 from starkware.starknet.business_logic.transaction.objects import InternalDeclare
 from starkware.starknet.core.os.contract_class.deprecated_class_hash import compute_deprecated_class_hash
-from starkware.starknet.definitions.general_config import StarknetChainId
+from starkware.starknet.definitions.general_config import StarknetChainId, StarknetOsConfig
 from starkware.starknet.testing.starknet import Starknet
 from starkware.starknet.testing.starknet import StarknetContract
 from starkware.starknet.compiler.compile import get_selector_from_name
@@ -16,6 +21,9 @@ from utils import (
     assert_revert,
     assert_event_emitted,
     assert_event_emitted_in_call_info,
+    create_ext_signer_wrapper,
+    create_raw_txn_with_fee_validation,
+    create_sign_pending_multisig_txn_call_from_original_call,
     deploy_account_txn,
     get_contract_def,
     parse_get_signers_response,
@@ -867,7 +875,7 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts):
         ecc_signer.send_transactions(
             account1, signer_id,
             [(account1.contract_address, "getPublicKey", [])]),
-        "expected secp256r1 signer",
+        "expected secp256r1 signer",  # since it was removed, signer type in index will be 0
     )
 
     # verify that getter takes expired etd into consideration
@@ -1224,13 +1232,13 @@ async def test_set_multisig_basic_assertions(init_contracts):
     await assert_revert(
         signer.send_transactions(
             account1, [(account1.contract_address, "set_multisig", [3])]),
-        "multisig currently supports 2 signers only",
+        "unsupported number of signers in set_multisig",
     )
 
     await assert_revert(
         signer.send_transactions(
             account1, [(account1.contract_address, "set_multisig", [2])]),
-        "multisig can only be set if account have additional signers",
+        "unsupported number of signers in set_multisig",
     )
 
 
@@ -1403,7 +1411,7 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
     assert response.call_info.retdata[0] == 0
 
     execution_info = await account1.get_pending_multisig_transaction().call()
-    assert (execution_info.result.pending_multisig_transaction.signer_1_id ==
+    assert (execution_info.result.pending_multisig_transaction.signers ==
             first_signer_id, )
     pending_hash = execution_info.result.pending_multisig_transaction.transaction_hash
     expire_at_sec = execution_info.result.pending_multisig_transaction.expire_at_sec
@@ -1421,6 +1429,14 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
     )
 
     # Fail on same signer
+    orig_raw_calldata = [
+        1,
+        account1.contract_address,
+        get_selector_from_name("getPublicKey"),
+        0,
+        0,
+        0,
+    ]
     await assert_revert(
         send_transactions_1st(*[
             account1,
@@ -1428,7 +1444,7 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
             [(
                 account1.contract_address,
                 "sign_pending_multisig_transaction",
-                [0, 0, 0, 0],
+                [len(orig_raw_calldata), *orig_raw_calldata, 2, 0, 1],
             )],
         ]),
         "multisig signer can only sign once",
@@ -2484,3 +2500,2548 @@ async def test_is_valid_sig_for_mode(init_contracts):
     exec_info = await account1.isValidSignature(
         test_hash, [0, *seed_sig, signer_id, *hws_sig]).call()
     assert exec_info.result.isValid == 1
+
+
+@pytest.mark.asyncio
+async def test_add_ext_account_signers(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer = [0x1111]
+    assert_revert(
+        signer.send_transactions(
+            account, [(account.contract_address,
+                       "add_external_account_signers", ext_signer)]),
+        "must have at least 2 external signers",
+    )
+
+    signer_type_id = 4
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [
+        (ext_account_1.contract_address, ext_signer_1),
+        (ext_account_2.contract_address, ext_signer_2),
+    ]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 2])])
+
+    partial_signer_model = [0, 0, signer_type_id, 0, 0]
+    for i, (ext_address, ext_signer) in enumerate(ext_accounts):
+        assert_event_emitted(
+            response,
+            from_address=account.contract_address,
+            keys="SignerAdded",
+            data=[
+                i + 1, ext_address, ext_signer.public_key,
+                *partial_signer_model
+            ],
+        )
+
+    exec_info = await account.get_signers().call()
+    all_signers = parse_get_signers_response(exec_info.call_info.result)
+    assert all_signers[1][0] == 1
+    assert all_signers[1][1] == ext_accounts[0][0]
+    assert all_signers[1][5] == signer_type_id
+    assert all_signers[2][0] == 2
+    assert all_signers[2][1] == ext_accounts[1][0]
+    assert all_signers[2][5] == signer_type_id
+
+
+@pytest.mark.asyncio
+async def test_cannot_add_ext_account_signers_if_secp256r1_signer_exists(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ecc_signer = TestECCSigner()
+    signer_payload = [
+        *ecc_signer.pk_x_uint256,
+        *ecc_signer.pk_y_uint256,
+        2,  # secp256r1
+        0,
+        0,
+    ]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_signer", signer_payload)])
+    secp256r1_signer_id = response.call_info.retdata[1]
+    dummy_ext_signers = [0x1111, 0, 0, 0, 4, 0, 0] * 2
+    await assert_revert(
+        ecc_signer.send_transactions(
+            account,
+            secp256r1_signer_id,
+            [(
+                account.contract_address,
+                "add_external_account_signers",
+                [len(dummy_ext_signers), *dummy_ext_signers, 2],
+            )],
+        ),
+        "cannot add external account signers together with secp256r1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_enforce_per_ext_account_signer_daily_txn_limit(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet.copy()
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [(ext_account_1.contract_address, ext_signer_1,
+                     create_ext_signer_wrapper(1, ext_signer_1.signer)),
+                    (ext_account_2.contract_address, ext_signer_2,
+                     create_ext_signer_wrapper(2, ext_signer_2.signer))]
+    _ = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 2])])
+    daily_txn_limit = 24
+    start_timestamp = int(datetime.now().timestamp())
+    starknet.state.state.block_info = BlockInfo.create_for_testing(
+        31337, start_timestamp)
+    raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=100,
+    )
+
+    for i in range(daily_txn_limit):
+        _ = await send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_calldata,
+            signer=ext_accounts[0][2],
+        )
+
+    # same day should fail
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_calldata,
+            signer=ext_accounts[0][2],
+        ),
+        "daily transaction limit exceeded",
+    )
+
+    # But a different signer should succeed
+    await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_calldata,
+        signer=ext_accounts[1][2],
+    )
+
+    # same day almost passed, limited signer should fail
+    starknet.state.state.block_info = BlockInfo.create_for_testing(
+        31338, start_timestamp - (start_timestamp % 86400) + 24 * 60 * 60 - 1)
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_calldata,
+            signer=ext_accounts[0][2],
+        ),
+        "daily transaction limit exceeded",
+    )
+    # day passed, should pass
+    starknet.state.state.block_info = BlockInfo.create_for_testing(
+        31338, start_timestamp - (start_timestamp % 86400) + 24 * 60 * 60 + 1)
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_calldata,
+        signer=ext_accounts[0][2],
+    )
+
+
+@pytest.mark.asyncio
+async def test_block_invalid_actions_if_ext_account_signers_added(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [(ext_account_1.contract_address, ext_signer_1,
+                     create_ext_signer_wrapper(1, ext_signer_1.signer)),
+                    (ext_account_2.contract_address, ext_signer_2,
+                     create_ext_signer_wrapper(2, ext_signer_2.signer))]
+    _ = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 2])])
+
+    for i, (entrypoint, calldata, failure_in, assertion) in enumerate([
+        ("disable_multisig", [], "sign_pending",
+         "cannot disable multisig in external account signers mode"),
+        ("remove_signer", [1], "sign_pending",
+         "tried removing invalid signer"),
+        ("remove_signer_with_etd", [1], "sign_pending",
+         "tried removing invalid signer"),
+        ("disable_multisig_with_etd", [], "sign_pending",
+         "disable_multisig_with_etd should be called with seed signer"),
+    ]):
+        raw_calldata = create_raw_txn_with_fee_validation(
+            account,
+            entrypoint,
+            calldata,
+            max_fee=100,
+        )
+
+        raw_invoke_first_signer = lambda: asyncio.create_task(
+            send_raw_invoke(
+                account,
+                get_selector_from_name("__execute__"),
+                raw_calldata,
+                signer=ext_accounts[0][2],
+            ))
+        if failure_in == "first_signer":
+            await assert_revert(
+                raw_invoke_first_signer(),
+                assertion,
+            )
+            # Fail on first signer, no need for additinal signer
+            continue
+        else:
+            _ = await raw_invoke_first_signer()
+
+        raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+            account,
+            raw_calldata,
+            orig_nonce=2 + i,
+        )
+        raw_invoke_sign_pending = lambda: asyncio.create_task(
+            send_raw_invoke(
+                account,
+                get_selector_from_name("__execute__"),
+                raw_sign_pending_txn_calldata,
+                signer=ext_accounts[1][2],
+            ))
+        if failure_in == "sign_pending":
+            await assert_revert(
+                raw_invoke_sign_pending(),
+                assertion,
+            )
+        else:
+            raise Exception("invalid flow")
+
+
+@pytest.mark.asyncio
+async def test_cannot_add_secp256r1_signer_if_ext_account_signers(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [(ext_account_1.contract_address, ext_signer_1,
+                     create_ext_signer_wrapper(1, ext_signer_1.signer)),
+                    (ext_account_2.contract_address, ext_signer_2,
+                     create_ext_signer_wrapper(2, ext_signer_2.signer))]
+    _ = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 2])])
+
+    ecc_signer = TestECCSigner()
+    add_signer_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "add_signer",
+        [
+            *ecc_signer.pk_x_uint256,
+            *ecc_signer.pk_y_uint256,
+            2,  # secp256r1
+            0,
+            0,
+        ],
+        max_fee=100,
+    )
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        add_signer_raw_calldata,
+        signer=ext_accounts[0][2],
+    )
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        add_signer_raw_calldata,
+        2,
+    )
+
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_sign_pending_txn_calldata,
+            signer=ext_accounts[1][2],
+        ),
+        "cannot add secp256r1 signer together with external account signers",
+    )
+
+
+@pytest.mark.asyncio
+async def test_fail_pre_exec_ext_account_signer_exceeding_validate_max_fee(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet.copy()
+    proxy_def, _, erc20_def, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+    erc20_decl = await starknet.deprecated_declare(contract_class=erc20_def)
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    fee_token = await starknet.deploy(
+        class_hash=erc20_decl.class_hash,
+        constructor_calldata=[
+            str_to_felt("TEST_TOKEN_1"),
+            str_to_felt("TST1"),
+            18,
+            *to_uint(10 * (10**18)),
+            account.contract_address,
+        ],
+    )
+    starknet.state.general_config = replace(
+        starknet.state.general_config,
+        starknet_os_config=StarknetOsConfig(
+            fee_token_address=fee_token.contract_address))
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer_3 = TestSigner(random.randint(1, 10**18))
+    ext_account_3, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_3,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [(ext_account_1.contract_address, ext_signer_1,
+                     create_ext_signer_wrapper(1, ext_signer_1.signer)),
+                    (ext_account_2.contract_address, ext_signer_2,
+                     create_ext_signer_wrapper(2, ext_signer_2.signer)),
+                    (ext_account_3.contract_address, ext_signer_3,
+                     create_ext_signer_wrapper(3, ext_signer_3.signer))]
+    _ = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 3])])
+
+    execution_info = await account.get_intermediate_ext_account_signer_max_validation_fee(
+    ).call()
+    max_validation_fee = execution_info.call_info.result[0]
+    expected_execution_fee = max_validation_fee + 1000
+    raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=expected_execution_fee,
+    )
+
+    # first signer fail on validation fee
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_calldata,
+            signer=ext_accounts[0][2],
+            max_fee=max_validation_fee + 1,
+        ),
+        "invalid max fee for intermediate signer",
+    )
+
+    # pass first signer
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_calldata,
+        signer=ext_accounts[0][2],
+        max_fee=max_validation_fee - 1,
+    )
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        raw_calldata,
+        2,
+        orig_max_fee=max_validation_fee - 1,
+    )
+
+    # fail 2nd signer on validation fee,
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_sign_pending_txn_calldata,
+            signer=ext_accounts[1][2],
+            max_fee=max_validation_fee + 1,
+        ),
+        "invalid max fee for intermediate signer",
+    )
+
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_sign_pending_txn_calldata,
+        signer=ext_accounts[1][2],
+        max_fee=max_validation_fee - 1,
+    )
+
+    # But make sure last (executing) signer can provide higher max fee
+    # (txn succeeds but fee transfer fails as we dont have fee token in testing)
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_sign_pending_txn_calldata,
+        signer=ext_accounts[2][2],
+        max_fee=expected_execution_fee,
+    )
+
+
+@pytest.mark.asyncio
+async def test_fail_last_ext_account_signer_exceeding_expected_max_fee(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [(ext_account_1.contract_address, ext_signer_1,
+                     create_ext_signer_wrapper(1, ext_signer_1.signer)),
+                    (ext_account_2.contract_address, ext_signer_2,
+                     create_ext_signer_wrapper(2, ext_signer_2.signer))]
+    _ = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 2])])
+
+    ecc_signer = TestECCSigner()
+    raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=100,
+    )
+
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_calldata,
+        signer=ext_accounts[0][2],
+    )
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        raw_calldata,
+        2,
+    )
+
+    # Fail on higher max fee than expected
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_sign_pending_txn_calldata,
+            signer=ext_accounts[1][2],
+            max_fee=101,
+        ),
+        "transaction max fee exceeds expected max fee",
+    )
+
+    # Passes on valid max fee
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_sign_pending_txn_calldata,
+        signer=ext_accounts[1][2],
+    )
+
+
+@pytest.mark.asyncio
+async def test_fail_ext_account_signer_txn_without_max_fee_validation(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [(ext_account_1.contract_address, ext_signer_1,
+                     create_ext_signer_wrapper(1, ext_signer_1.signer)),
+                    (ext_account_2.contract_address, ext_signer_2,
+                     create_ext_signer_wrapper(2, ext_signer_2.signer))]
+    _ = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 2])])
+
+    ecc_signer = TestECCSigner()
+    raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=None,
+    )
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_calldata,
+            signer=ext_accounts[0][2],
+        ),
+        "max fee validation expected in first call",
+    )
+
+
+@pytest.mark.asyncio
+async def test_cannot_add_the_same_ext_account_signer_twice(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [(ext_account_1.contract_address, ext_signer_1,
+                     create_ext_signer_wrapper(1, ext_signer_1.signer)),
+                    (ext_account_2.contract_address, ext_signer_2,
+                     create_ext_signer_wrapper(2, ext_signer_2.signer))]
+
+    # Fail on initial addition
+    await assert_revert(
+        signer.send_transactions(
+            account,
+            [(account.contract_address, "add_external_account_signers",
+              [2, ext_accounts[0][0], ext_accounts[0][0], 2])]),
+        "external account signer address already exists",
+    )
+
+    _ = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 2])])
+
+    # Fail on subsequent additions as well
+    ext_signer_3 = TestSigner(random.randint(1, 10**18))
+    ext_account_3, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_3,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    add_ext_signer_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "add_external_account_signers",
+        [
+            2,
+            ext_account_3.contract_address,
+            ext_account_2.contract_address,  # already exists
+            2,
+        ],
+        max_fee=100,
+    )
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        add_ext_signer_raw_calldata,
+        signer=ext_accounts[0][2],
+    )
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        add_ext_signer_raw_calldata,
+        2,
+    )
+
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_sign_pending_txn_calldata,
+            signer=ext_accounts[1][2],
+        ),
+        "external account signer address already exists",
+    )
+
+
+@pytest.mark.asyncio
+async def test_fail_empty_sig_on_ext_account_signer(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_3 = TestSigner(random.randint(1, 10**18))
+    ext_account_3, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_3,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [(ext_account_1.contract_address, ext_signer_1,
+                     create_ext_signer_wrapper(1, ext_signer_1.signer)),
+                    (ext_account_2.contract_address, ext_signer_2,
+                     create_ext_signer_wrapper(2, ext_signer_2.signer)),
+                    (ext_account_3.contract_address, ext_signer_3,
+                     create_ext_signer_wrapper(3, ext_signer_3.signer))]
+    _ = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 3])])
+
+    get_public_key_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=100,
+    )
+
+    # preamble only
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_public_key_raw_calldata,
+            signer=namedtuple(
+                "_nt",
+                "sign")(lambda hash: [1, *ext_signer_1.signer.sign(hash)]),
+        ),
+        "invalid external account signer signature",
+    )
+
+    # partial sig after preamble
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_public_key_raw_calldata,
+            signer=namedtuple("_nt", "sign")(lambda hash: [
+                1, *ext_signer_1.signer.sign(hash), 1, 1,
+                ext_signer_1.signer.sign(hash)[0]
+            ]),
+        ),
+        "unexpected signature",
+    )
+
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        get_public_key_raw_calldata,
+        signer=ext_accounts[0][2],
+    )
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        get_public_key_raw_calldata,
+        2,
+    )
+
+    # preamble only
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_public_key_raw_calldata,
+            signer=namedtuple(
+                "_nt",
+                "sign")(lambda hash: [2, *ext_signer_2.signer.sign(hash)]),
+        ),
+        "invalid external account signer signature",
+    )
+
+    # partial sig after preamble
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_public_key_raw_calldata,
+            signer=namedtuple("_nt", "sign")(lambda hash: [
+                2, *ext_signer_1.signer.sign(hash), 2, 1,
+                ext_signer_2.signer.sign(hash)[0]
+            ]),
+        ),
+        "invalid signature",
+    )
+
+
+@pytest.mark.asyncio
+async def test_cannot_sign_more_than_once_with_same_ext_account_signer(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [(ext_account_1.contract_address, ext_signer_1,
+                     create_ext_signer_wrapper(1, ext_signer_1.signer)),
+                    (ext_account_2.contract_address, ext_signer_2,
+                     create_ext_signer_wrapper(2, ext_signer_2.signer))]
+    _ = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 2])])
+
+    get_public_key_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=100,
+    )
+    _ = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        get_public_key_raw_calldata,
+        signer=ext_accounts[0][2],
+    )
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        get_public_key_raw_calldata,
+        2,
+    )
+
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_sign_pending_txn_calldata,
+            signer=ext_accounts[0][2],
+        ),
+        "multisig signer can only sign once",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    [
+        "num_ext_signers",
+        "num_multisig_signers",
+        "hws_signer_ids",
+    ],
+    [
+        (2, 2, []),
+        (2, 2, [1]),
+        (3, 2, []),
+        (3, 3, []),
+        (4, 3, [2, 3]),
+        (50, 48, []),
+    ],
+    ids=[
+        "2 of 2 stark",
+        "2 of 2 stark and hws",
+        "2 of 3 stark",
+        "3 of 3 stark",
+        "3 of 4 stark and hws",
+        "stress 48 of 50 stark",
+    ],
+)
+async def test_sign_ext_account_signers(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+    num_ext_signers,
+    num_multisig_signers,
+    hws_signer_ids,
+):
+    if num_ext_signers > 10:
+        pytest.skip(reason='skipping stress tests')
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(num_ext_signers):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        if i in hws_signer_ids:
+            ecc_signer = TestECCSigner()
+            hws_signer_payload = [
+                *ecc_signer.pk_x_uint256,
+                *ecc_signer.pk_y_uint256,
+                2,  # secp256r1
+                0,
+                0,
+            ]
+            hws_signer_id = 1
+        else:
+            ecc_signer = None
+            hws_signer_payload = None
+            hws_signer_id = None
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+            hw_signer=hws_signer_payload,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+            ecc_signer,
+            hws_signer_id,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers", [
+            len(ext_signer_addresses), *ext_signer_addresses,
+            num_multisig_signers
+        ])])
+
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=100,
+    )
+
+    # try 3 consecutive txns
+    for txn_num in range(3):
+        nonce = await starknet.state.state.get_nonce_at(
+            StorageDomain.ON_CHAIN, account.contract_address)
+        response = await send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_pubkey_raw_calldata,
+            signer=ext_signers[0][2],
+            nonce=nonce,
+        )
+        execution_info = await account.get_pending_multisig_transaction().call(
+        )
+        assert (
+            execution_info.result.pending_multisig_transaction.signers == 1)
+        pending_hash = execution_info.result.pending_multisig_transaction.transaction_hash
+
+        raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+            account,
+            get_pubkey_raw_calldata,
+            nonce,
+        )
+
+        additional_signers = ext_signers[1:num_multisig_signers]
+        for i, (ext_address, ext_signer,
+                ext_signer_wrapper) in enumerate(additional_signers):
+            signer_id = i + 2
+            response = await send_raw_invoke(
+                account,
+                get_selector_from_name("__execute__"),
+                raw_sign_pending_txn_calldata,
+                signer=ext_signer_wrapper,
+            )
+            assert_event_emitted(
+                response,
+                from_address=account.contract_address,
+                keys=[
+                    get_selector_from_name("MultisigPendingTransactionSigned"),
+                    pending_hash
+                ],
+                data=[signer_id],
+            )
+            # last signer is not added but rather txn is executed
+            if i < len(additional_signers) - 1:
+                execution_info = await account.get_pending_multisig_transaction(
+                ).call()
+                assert (execution_info.result.signer_ids[i + 1] == signer_id)
+
+        assert response.call_info.retdata[2] == signer.public_key
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    [
+        "num_ext_signers",
+        "num_multisig_signers",
+        "hws_signer_ids",
+        "incorrect_sig_signer_ids",
+    ],
+    [
+        (2, 2, [1], [1]),
+        (2, 2, [1], [2]),
+        (3, 2, [], [2]),
+    ],
+    ids=[
+        "2 of 2 hws - invalid 1st",
+        "2 of 2 hws - invalid 2nd",
+        "2 of 3 stark - invalid 2nd",
+    ],
+)
+async def test_invalid_sign_ext_account_signers(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+    num_ext_signers,
+    num_multisig_signers,
+    hws_signer_ids,
+    incorrect_sig_signer_ids,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(num_ext_signers):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        if i in hws_signer_ids:
+            ecc_signer = TestECCSigner()
+            hws_signer_payload = [
+                *ecc_signer.pk_x_uint256,
+                *ecc_signer.pk_y_uint256,
+                2,  # secp256r1
+                0,
+                0,
+            ]
+            hws_signer_id = 1
+        else:
+            ecc_signer = None
+            hws_signer_payload = None
+            hws_signer_id = None
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+            hw_signer=hws_signer_payload,
+        )
+        invalid_signer = ext_signer_id in incorrect_sig_signer_ids
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+            ecc_signer,
+            hws_signer_id,
+            invalid_sig=invalid_signer,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers", [
+            len(ext_signer_addresses), *ext_signer_addresses,
+            num_multisig_signers
+        ])])
+
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=100,
+    )
+
+    nonce = await starknet.state.state.get_nonce_at(StorageDomain.ON_CHAIN,
+                                                    account.contract_address)
+    if 1 in incorrect_sig_signer_ids:
+        await assert_revert(
+            send_raw_invoke(
+                account,
+                get_selector_from_name("__execute__"),
+                get_pubkey_raw_calldata,
+                signer=ext_signers[0][2],
+                nonce=nonce,
+            ),
+            "invalid external account signers signature",
+        )
+    else:
+        response = await send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_pubkey_raw_calldata,
+            signer=ext_signers[0][2],
+            nonce=nonce,
+        )
+        execution_info = await account.get_pending_multisig_transaction().call(
+        )
+        assert (
+            execution_info.result.pending_multisig_transaction.signers == 1)
+        pending_hash = execution_info.result.pending_multisig_transaction.transaction_hash
+
+        raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+            account,
+            get_pubkey_raw_calldata,
+            nonce,
+        )
+
+        additional_signers = ext_signers[1:num_multisig_signers]
+        for i, (ext_address, ext_signer,
+                ext_signer_wrapper) in enumerate(additional_signers):
+            signer_id = i + 2
+            if signer_id in incorrect_sig_signer_ids:
+                await assert_revert(
+                    send_raw_invoke(
+                        account,
+                        get_selector_from_name("__execute__"),
+                        raw_sign_pending_txn_calldata,
+                        signer=ext_signer_wrapper,
+                    ),
+                    "invalid external account signers signature",
+                )
+                continue
+            else:
+                response = await send_raw_invoke(
+                    account,
+                    get_selector_from_name("__execute__"),
+                    raw_sign_pending_txn_calldata,
+                    signer=ext_signer_wrapper,
+                )
+                assert_event_emitted(
+                    response,
+                    from_address=account.contract_address,
+                    keys=[
+                        get_selector_from_name(
+                            "MultisigPendingTransactionSigned"), pending_hash
+                    ],
+                    data=[signer_id],
+                )
+
+
+@pytest.mark.asyncio
+async def test_sign_recursive_ext_account_signers(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    num_ext_signers = 4
+    ext_signers = []
+    for i in range(num_ext_signers):
+        # signers 2,3 are actually inner signers 1, 2
+        ext_signer_id = i + 1 if i < 2 else i - 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+            hw_signer=None,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    # Add first 2 external signers to top main account
+    _ = await signer.send_transactions(
+        account,
+        [(account.contract_address, "add_external_account_signers",
+          [len(ext_signer_addresses[:2]), *ext_signer_addresses[:2], 2])])
+    # Add the other signers to the 2nd external signer on the main account
+    inner_ext_signer = ext_signers[1]
+    _ = await inner_ext_signer[1].send_transactions(
+        inner_ext_signer[0],
+        [(inner_ext_signer[0].contract_address, "add_external_account_signers",
+          [len(ext_signer_addresses[2:]), *ext_signer_addresses[2:], 2])])
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=100,
+    )
+
+    response = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        get_pubkey_raw_calldata,
+        signer=ext_signers[0][2],
+    )
+    execution_info = await account.get_pending_multisig_transaction().call()
+    assert (execution_info.result.pending_multisig_transaction.signers == 1)
+    pending_hash = execution_info.result.pending_multisig_transaction.transaction_hash
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        get_pubkey_raw_calldata,
+        2,
+    )
+
+    # prepare second signer sig with its inner ext signers
+    second_outer_signer = ext_signers[1]
+    second_outer_signer_id = 2
+    first_inner_signer = ext_signers[2]
+    second_inner_signer = ext_signers[3]
+    response = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_sign_pending_txn_calldata,
+        signer=namedtuple("_nt", "sign")(
+            lambda hash: [
+                *second_outer_signer[2].sign(hash)[:3],
+                second_outer_signer_id,
+                # 1st inner id preamble - +1
+                # 1st inner stark preamble - +2
+                # 1st inner stark id - +1
+                # 1st inner stark - +3
+                # 2nd inner stark id - +1
+                # 2nd inner stark - +3
+                # total length - 13
+                13,
+                *first_inner_signer[2].sign(hash),
+                *second_inner_signer[2].sign(hash)[3:],
+            ]))
+    assert_event_emitted(
+        response,
+        from_address=account.contract_address,
+        keys=[
+            get_selector_from_name("MultisigPendingTransactionSigned"),
+            pending_hash
+        ],
+        data=[second_outer_signer_id],
+    )
+    assert response.call_info.retdata[2] == signer.public_key
+
+
+@pytest.mark.asyncio
+async def test_sign_recursive_ext_account_signers_single_sig(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    num_ext_signers = 4
+    ext_signers = []
+    for i in range(num_ext_signers):
+        # signers 2,3 are actually inner signers 1, 2
+        ext_signer_id = i + 1 if i < 2 else i - 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+            hw_signer=None,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    # Add first 2 external signers to top main account
+    _ = await signer.send_transactions(
+        account,
+        [(account.contract_address, "add_external_account_signers",
+          [len(ext_signer_addresses[:2]), *ext_signer_addresses[:2], 2])])
+    # Add the other signers to the 2nd external signer on the main account
+    inner_ext_signer = ext_signers[1]
+    _ = await inner_ext_signer[1].send_transactions(
+        inner_ext_signer[0],
+        [(inner_ext_signer[0].contract_address, "add_external_account_signers",
+          [len(ext_signer_addresses[2:]), *ext_signer_addresses[2:], 2])])
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=None,
+    )
+    second_outer_signer_id = 2
+    first_inner_signer = ext_signers[2]
+    second_inner_signer = ext_signers[3]
+    single_sig_signer = namedtuple("_nt", "sign")(
+        lambda hash: [
+            *ext_signers[0][2].sign(hash),
+            second_outer_signer_id,
+            # 1st inner id preamble - +1
+            # 1st inner stark preamble - +2
+            # 1st inner stark id - +1
+            # 1st inner stark - +3
+            # 2nd inner stark id - +1
+            # 2nd inner stark - +3
+            # total length - 13
+            13,
+            *first_inner_signer[2].sign(hash),
+            *second_inner_signer[2].sign(hash)[3:],
+        ])
+    response = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        get_pubkey_raw_calldata,
+        signer=single_sig_signer,
+    )
+    assert response.call_info.retdata[1] == signer.public_key
+
+
+@pytest.mark.asyncio
+async def test_remove_ext_account_signers(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(3):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_signer_addresses), *ext_signer_addresses, 3])])
+
+    remove_ext_signers_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "remove_external_account_signers",
+        [
+            1,
+            1,  # remove signer id 1
+            2,  # set multisig to 2
+        ],
+        max_fee=100,
+    )
+    response = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        remove_ext_signers_raw_calldata,
+        signer=ext_signers[0][2],
+    )
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        remove_ext_signers_raw_calldata,
+        2,
+    )
+
+    # 2nd signer should just sign
+    await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_sign_pending_txn_calldata,
+        signer=ext_signers[1][2],
+    )
+
+    response = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_sign_pending_txn_calldata,
+        signer=ext_signers[2][2],
+    ),
+    assert_event_emitted(
+        response[0],
+        from_address=account.contract_address,
+        keys="SignerRemoved",
+        data=[1],
+    )
+    assert_event_emitted(
+        response[0],
+        from_address=account.contract_address,
+        keys="MultisigSet",
+        data=[2],
+    )
+    exec_info = await account.get_signers().call()
+    all_signers = parse_get_signers_response(exec_info.call_info.result)
+    ext_signer_type_id = 4
+    assert all_signers[1][0] == 2
+    assert all_signers[1][1] == ext_signer_addresses[1]
+    assert all_signers[1][5] == ext_signer_type_id
+    assert all_signers[2][0] == 3
+    assert all_signers[2][1] == ext_signer_addresses[2]
+    assert all_signers[2][5] == ext_signer_type_id
+
+
+@pytest.mark.asyncio
+async def test_fail_on_invalid_remove_ext_account_signers(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(3):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_signer_addresses), *ext_signer_addresses, 3])])
+
+    remove_ext_signers_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "remove_external_account_signers",
+        [
+            2,
+            1,
+            2,  # remove signer ids 1,2
+            2  # set multisig to 2
+        ],
+        max_fee=100,
+    )
+
+    response = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        remove_ext_signers_raw_calldata,
+        signer=ext_signers[0][2],
+    )
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        remove_ext_signers_raw_calldata,
+        2,
+    )
+
+    # 2nd signer should just sign
+    await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        raw_sign_pending_txn_calldata,
+        signer=ext_signers[1][2],
+    )
+    # 3rd signer will fail - removal will cause # ext signers < 2
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_sign_pending_txn_calldata,
+            signer=ext_signers[2][2],
+        ),
+        "invalid amount of removed external account signers",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    [
+        "num_ext_signers",
+        "num_multisig_signers",
+        "hws_signer_ids",
+        "incorrect_sig_signer_ids",
+    ],
+    [
+        (2, 2, [1], [1]),
+        (2, 2, [1], [2]),
+        (3, 2, [], [2]),
+    ],
+    ids=[
+        "2 of 2 hws - invalid 1st",
+        "2 of 2 hws - invalid 2nd",
+        "2 of 3 stark - invalid 2nd",
+    ],
+)
+async def test_invalid_sign_ext_account_signers_single_sig(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+    num_ext_signers,
+    num_multisig_signers,
+    hws_signer_ids,
+    incorrect_sig_signer_ids,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(num_ext_signers):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        if i in hws_signer_ids:
+            ecc_signer = TestECCSigner()
+            hws_signer_payload = [
+                *ecc_signer.pk_x_uint256,
+                *ecc_signer.pk_y_uint256,
+                2,  # secp256r1
+                0,
+                0,
+            ]
+            hws_signer_id = 1
+        else:
+            ecc_signer = None
+            hws_signer_payload = None
+            hws_signer_id = None
+
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+            hw_signer=hws_signer_payload,
+        )
+
+        is_invalid_signer = ext_signer_id in incorrect_sig_signer_ids
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+            ecc_signer,
+            hws_signer_id,
+            invalid_sig=is_invalid_signer,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers", [
+            len(ext_signer_addresses), *ext_signer_addresses,
+            num_multisig_signers
+        ])])
+
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=None,
+    )
+
+    def sign_with_m_of_n_signers(hash):
+        sigs = []
+        for i, (_, _, signer_wrapper) in enumerate(
+                ext_signers[:num_multisig_signers]):
+            # no need for preamble for each signer
+            ext_signer_sig = signer_wrapper.sign(hash)[3:]
+            sigs += ext_signer_sig
+        return sigs
+
+    signer_obj = namedtuple('SignerTuple', ['sign'])(lambda hash: [
+        1,
+        *ext_signers[0][1].signer.sign(hash),
+        *sign_with_m_of_n_signers(hash),
+    ])
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_pubkey_raw_calldata,
+            signer=signer_obj,
+        ),
+        "invalid external account signers signature",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    [
+        "num_ext_signers",
+        "num_multisig_signers",
+        "hws_signer_ids",
+    ],
+    [
+        (2, 2, []),
+        (2, 2, [1]),
+        (3, 2, []),
+        (3, 3, []),
+        (4, 3, [2, 3]),
+    ],
+    ids=[
+        "2 of 2 stark",
+        "2 of 2 stark and hws",
+        "2 of 3 stark",
+        "3 of 3 stark",
+        "3 of 4 stark and hws",
+    ],
+)
+async def test_sign_ext_account_signers_single_sig(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+    num_ext_signers,
+    num_multisig_signers,
+    hws_signer_ids,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(num_ext_signers):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        if i in hws_signer_ids:
+            ecc_signer = TestECCSigner()
+            hws_signer_payload = [
+                *ecc_signer.pk_x_uint256,
+                *ecc_signer.pk_y_uint256,
+                2,  # secp256r1
+                0,
+                0,
+            ]
+            hws_signer_id = 1
+        else:
+            ecc_signer = None
+            hws_signer_payload = None
+            hws_signer_id = None
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+            hw_signer=hws_signer_payload,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+            ecc_signer,
+            hws_signer_id,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers", [
+            len(ext_signer_addresses), *ext_signer_addresses,
+            num_multisig_signers
+        ])])
+
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=None,
+    )
+
+    def sign_with_m_of_n_signers(hash, num_signers):
+        sigs = []
+        for i, (_, _, signer_wrapper) in enumerate(ext_signers[:num_signers]):
+            # no need for preamble for each signer
+            ext_signer_sig = signer_wrapper.sign(hash)[3:]
+            sigs += ext_signer_sig
+        return sigs
+
+    signer_obj = namedtuple('SignerTuple', ['sign'])(lambda hash: [
+        1,
+        *ext_signers[0][1].signer.sign(hash),
+        *sign_with_m_of_n_signers(hash, num_multisig_signers),
+    ])
+    not_all_signers_signer_obj = namedtuple(
+        'SignerTuple', ['sign'])(lambda hash: [
+            1,
+            *ext_signers[0][1].signer.sign(hash),
+            *sign_with_m_of_n_signers(hash, num_multisig_signers - 1),
+        ])
+
+    if num_multisig_signers > 2:
+        await assert_revert(
+            send_raw_invoke(
+                account,
+                get_selector_from_name("__execute__"),
+                get_pubkey_raw_calldata,
+                signer=not_all_signers_signer_obj,
+            ),
+            "invalid amount of signers in signature",
+        )
+    # else we have 1 signer in the sig, so it is not the atomic multisig flow
+    response = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        get_pubkey_raw_calldata,
+        signer=signer_obj,
+    )
+    assert response.call_info.retdata[1] == signer.public_key
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    [
+        "num_ext_signers",
+        "num_multisig_signers",
+        "hws_signer_ids",
+    ],
+    [
+        (5, 3, []),
+        (4, 3, [1]),
+    ],
+    ids=[
+        "3 of 5 stark",
+        "3 of 4 stark and hws",
+    ],
+)
+async def test_fail_sign_ext_account_signers_single_sig_not_all_signers(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+    num_ext_signers,
+    num_multisig_signers,
+    hws_signer_ids,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(num_ext_signers):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        if i in hws_signer_ids:
+            ecc_signer = TestECCSigner()
+            hws_signer_payload = [
+                *ecc_signer.pk_x_uint256,
+                *ecc_signer.pk_y_uint256,
+                2,  # secp256r1
+                0,
+                0,
+            ]
+            hws_signer_id = 1
+        else:
+            ecc_signer = None
+            hws_signer_payload = None
+            hws_signer_id = None
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+            hw_signer=hws_signer_payload,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+            ecc_signer,
+            hws_signer_id,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers", [
+            len(ext_signer_addresses), *ext_signer_addresses,
+            num_multisig_signers
+        ])])
+
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=None,
+    )
+
+    def sign_with_m_of_n_signers(hash):
+        sigs = []
+        for i, (_, _, signer_wrapper) in enumerate(
+                ext_signers[:num_multisig_signers - 1]):
+            # no need for preamble for each signer
+            ext_signer_sig = signer_wrapper.sign(hash)[3:]
+            sigs += ext_signer_sig
+        return sigs
+
+    signer_obj = namedtuple('SignerTuple', ['sign'])(lambda hash: [
+        1,
+        *ext_signers[0][1].signer.sign(hash),
+        *sign_with_m_of_n_signers(hash),
+    ])
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_pubkey_raw_calldata,
+            signer=signer_obj,
+        ),
+        "invalid amount of signers in signature",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    [
+        "num_ext_signers",
+        "num_multisig_signers",
+        "hws_signer_ids",
+    ],
+    [
+        (4, 3, [1]),
+    ],
+    ids=[
+        "3 of 4 stark and hws",
+    ],
+)
+async def test_fail_sign_ext_account_signers_single_sig_dup_signer(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+    num_ext_signers,
+    num_multisig_signers,
+    hws_signer_ids,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(num_ext_signers):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        if i in hws_signer_ids:
+            ecc_signer = TestECCSigner()
+            hws_signer_payload = [
+                *ecc_signer.pk_x_uint256,
+                *ecc_signer.pk_y_uint256,
+                2,  # secp256r1
+                0,
+                0,
+            ]
+            hws_signer_id = 1
+        else:
+            ecc_signer = None
+            hws_signer_payload = None
+            hws_signer_id = None
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+            hw_signer=hws_signer_payload,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+            ecc_signer,
+            hws_signer_id,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers", [
+            len(ext_signer_addresses), *ext_signer_addresses,
+            num_multisig_signers
+        ])])
+
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=None,
+    )
+
+    def sign_dup_with_m_of_n_signers(hash):
+        sigs = []
+        for i, (_, _, signer_wrapper) in enumerate(
+                ext_signers[:num_multisig_signers - 1]):
+            # dup last signer
+            if i == num_multisig_signers - 2:
+                _, _, signer_wrapper = ext_signers[num_multisig_signers - 3]
+            # no need for preamble for each signer
+            ext_signer_sig = signer_wrapper.sign(hash)[3:]
+            sigs += ext_signer_sig
+        return sigs
+
+    signer_obj = namedtuple('SignerTuple', ['sign'])(lambda hash: [
+        1,
+        *ext_signers[0][1].signer.sign(hash),
+        *sign_dup_with_m_of_n_signers(hash),
+    ])
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_pubkey_raw_calldata,
+            signer=signer_obj,
+        ),
+        "duplicate external account signer id in signature",
+    )
+
+
+@pytest.mark.asyncio
+async def test_is_valid_sig_for_ext_account_signers_mode(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    signer_type_id = 4
+    ext_signer_1 = TestSigner(random.randint(1, 10**18))
+    ext_account_1, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_1,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+    ext_signer_2 = TestSigner(random.randint(1, 10**18))
+    ext_account_2, _ = await deploy_account_txn(
+        starknet,
+        ext_signer_2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_accounts = [
+        (ext_account_1.contract_address, ext_signer_1),
+        (ext_account_2.contract_address, ext_signer_2),
+    ]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers",
+                   [len(ext_accounts), *[x[0] for x in ext_accounts], 2])])
+
+    test_hash = 0x1234
+    seed_sig = list(signer.signer.sign(test_hash))
+
+    # seed should fail
+    await assert_revert(account.isValidSignature(test_hash, seed_sig).call())
+
+    ext_signer_1_sig = ext_signer_1.signer.sign(test_hash)
+    ext_signer_2_sig = ext_signer_2.signer.sign(test_hash)
+
+    # should fail with a single ext signer
+    sig = [1, *ext_signer_1_sig, 1, 3, 0, *ext_signer_1_sig]
+    exec_info = await account.isValidSignature(test_hash, sig).call()
+    assert exec_info.result.isValid == 0
+
+    # should succeed with both signers
+    sig = [
+        1,
+        *ext_signer_1_sig,
+        1,
+        3,
+        0,
+        *ext_signer_1_sig,
+        2,
+        3,
+        0,
+        *ext_signer_2_sig,
+    ]
+    exec_info = await account.isValidSignature(test_hash, sig).call()
+    assert exec_info.result.isValid == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    [
+        "num_ext_signers",
+        "num_multisig_signers",
+    ],
+    [
+        (2, 2),
+        (3, 2),
+    ],
+    ids=[
+        "2 of 2",
+        "2 of 3",
+    ],
+)
+async def test_fail_preamble_sign_only_in_ext_account_signers_mode(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+    num_ext_signers,
+    num_multisig_signers,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(num_ext_signers):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers", [
+            len(ext_signer_addresses), *ext_signer_addresses,
+            num_multisig_signers
+        ])])
+
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=100,
+    )
+
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_pubkey_raw_calldata,
+            signer=namedtuple(
+                "_nt", "sign")(lambda hash: ext_signers[0][2].sign(hash)[:3]),
+        ),
+        "invalid external account signer signature",
+    )
+
+    response = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        get_pubkey_raw_calldata,
+        signer=ext_signers[0][2],
+    )
+    execution_info = await account.get_pending_multisig_transaction().call()
+    assert (execution_info.result.pending_multisig_transaction.signers == 1)
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        get_pubkey_raw_calldata,
+        2,
+    )
+
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_sign_pending_txn_calldata,
+            signer=namedtuple(
+                "_nt", "sign")(lambda hash: ext_signers[1][2].sign(hash)[:3]),
+        ),
+        "invalid external account signer signature",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    [
+        "num_ext_signers",
+        "num_multisig_signers",
+    ],
+    [
+        (2, 2),
+        (3, 2),
+    ],
+    ids=[
+        "2 of 2",
+        "2 of 3",
+    ],
+)
+async def test_fail_seed_sign_after_ext_account_signers_added(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+    num_ext_signers,
+    num_multisig_signers,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, _, _, _ = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
+
+    signer = TestSigner(random.randint(1, 10**18))
+
+    account, _ = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
+    )
+
+    ext_signers = []
+    for i in range(num_ext_signers):
+        ext_signer_id = i + 1
+        ext_signer = TestSigner(random.randint(1, 10**18))
+        ext_account, _ = await deploy_account_txn(
+            starknet,
+            ext_signer,
+            proxy_def,
+            proxy_decl,
+            account_base_impl_decl,
+            account_decl,
+        )
+
+        ext_signer_wrapper = create_ext_signer_wrapper(
+            ext_signer_id,
+            ext_signer.signer,
+        )
+        ext_signers.append((ext_account, ext_signer, ext_signer_wrapper))
+
+    ext_signer_addresses = [x[0].contract_address for x in ext_signers]
+    response = await signer.send_transactions(
+        account, [(account.contract_address, "add_external_account_signers", [
+            len(ext_signer_addresses), *ext_signer_addresses,
+            num_multisig_signers
+        ])])
+
+    # get_public_key ext signer #1 - will create a pending txn
+    get_pubkey_raw_calldata = create_raw_txn_with_fee_validation(
+        account,
+        "get_public_key",
+        [],
+        max_fee=100,
+    )
+
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            get_pubkey_raw_calldata,
+            signer=signer.signer,
+        ),
+        "invalid external account signer signature",
+    )
+
+    response = await send_raw_invoke(
+        account,
+        get_selector_from_name("__execute__"),
+        get_pubkey_raw_calldata,
+        signer=ext_signers[0][2],
+    )
+    execution_info = await account.get_pending_multisig_transaction().call()
+    assert (execution_info.result.pending_multisig_transaction.signers == 1)
+
+    raw_sign_pending_txn_calldata = create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        get_pubkey_raw_calldata,
+        2,
+    )
+
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_sign_pending_txn_calldata,
+            signer=signer.signer,
+        ),
+        "invalid external account signer signature",
+    )
+
+    # Fail on seed signing after ext account signer preamble
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            raw_sign_pending_txn_calldata,
+            signer=namedtuple("_nt", "sign")(lambda hash: ext_signers[0][
+                2].sign(hash)[:3] + [0, 3, *signer.signer.sign(hash), 0]),
+        ),
+        "invalid external account signer signature",
+    )

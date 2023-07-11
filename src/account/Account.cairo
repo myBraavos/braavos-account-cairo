@@ -10,7 +10,10 @@ from starkware.starknet.common.syscalls import (
     get_tx_info,
     library_call,
 )
-from starkware.cairo.common.math import assert_not_zero
+from starkware.cairo.common.math import (
+    assert_le,
+    assert_not_zero,
+)
 from starkware.cairo.common.math_cmp import (
     is_le_felt,
     is_not_zero,
@@ -34,10 +37,13 @@ from src.signers.library import (
     IndexedSignerModel,
     Signers,
     SignerModel,
+    Signers_num_ext_account_signers,
 )
 from src.utils.constants import (
     ACCOUNT_IMPL_VERSION,
+    ACCOUNT_MOA_DAILY_TXN_LIMIT,
     IACCOUNT_ID,
+    MULTISIG_MOA_MAX_VALIDATE_FEE_FOR_PRE_EXEC_SIGNER,
     SUPPORTS_INTERFACE_SELECTOR,
     TX_VERSION_1_EST_FEE,
 )
@@ -127,6 +133,36 @@ func add_signer{
 }
 
 @external
+func add_external_account_signers {
+    syscall_ptr: felt*,
+    pedersen_ptr: HashBuiltin*,
+    range_check_ptr
+}(ext_signer_addresses_len: felt, ext_signer_addresses: felt*, num_multisig_signers: felt) -> () {
+    Guards.assert_only_self();
+
+    let (num_ext_signers) = Signers.add_external_account_signers(
+        ext_signer_addresses_len, ext_signer_addresses);
+
+    Multisig.set_multisig(num_multisig_signers, num_ext_signers);
+    return ();
+}
+
+@external
+func remove_external_account_signers {
+    syscall_ptr: felt*,
+    pedersen_ptr: HashBuiltin*,
+    range_check_ptr
+}(remove_signer_ids_len: felt, remove_signer_ids: felt*, num_multisig_signers: felt) -> () {
+    Guards.assert_only_self();
+
+    let (num_ext_signers) = Signers.remove_external_account_signers(
+        remove_signer_ids_len, remove_signer_ids);
+
+    Multisig.set_multisig(num_multisig_signers, num_ext_signers);
+    return ();
+}
+
+@external
 func swap_signers{
     syscall_ptr: felt*,
     pedersen_ptr: HashBuiltin*,
@@ -164,7 +200,7 @@ func remove_signer{
     Signers.remove_signer(index);
     // Since we only support 2 signers, successful removal of additional signer
     // necessarily means that we need to disable multisig
-    Multisig.disable_multisig();
+    Multisig.disable_multisig(0);
     return ();
 }
 
@@ -301,12 +337,15 @@ func isValidSignature{
     Signers.apply_elapsed_etd_requests(block_timestamp);
 
     let (multisig_num_signers) = Multisig.get_multisig_num_signers();
-    let in_multisig_mode = is_not_zero(multisig_num_signers);
-    let (num_additional_signers) = Account_signers_num_hw_signers.read();
-    let in_hws_mode = is_not_zero(num_additional_signers);
+    let (num_secp256r1_signers) = Account_signers_num_hw_signers.read();
+    let in_hws_mode = is_not_zero(num_secp256r1_signers);
+    let (num_ext_account_signers) = Signers_num_ext_account_signers.read();
+    let in_ext_account_signers_mode = is_not_zero(num_ext_account_signers); 
 
     let (isValid: felt) = Signers.is_valid_signature_for_mode(
-        hash, signature_len, signature, in_multisig_mode, in_hws_mode
+        hash,
+        signature_len, signature,
+        multisig_num_signers, in_hws_mode, in_ext_account_signers_mode,
     );
     return (isValid=isValid);
 }
@@ -337,7 +376,16 @@ func set_multisig{
 } (num_signers: felt) -> () {
     Guards.assert_only_self();
 
-    let (num_account_signers) = Account_signers_num_hw_signers.read();
+    let (num_secp256r1_signers) = Account_signers_num_hw_signers.read();
+    let (num_ext_account_signers) = Signers_num_ext_account_signers.read();
+
+    // Currently ext account signers and secp256r1 signer are mutually exclusive
+    // so it's safe to add them. In case of secp256r1, we have 2 account signers (secp256r1 + seed)
+    let num_account_signers = num_ext_account_signers + 2 * num_secp256r1_signers;
+    with_attr error_message("Account: unsupported number of signers in set_multisig") {
+        assert_le(2, num_account_signers);
+    }
+
     Multisig.set_multisig(num_signers, num_account_signers);
     return ();
 }
@@ -347,14 +395,17 @@ func get_pending_multisig_transaction{
     syscall_ptr: felt*,
     pedersen_ptr: HashBuiltin*,
     range_check_ptr
-} () -> (pending_multisig_transaction: PendingMultisigTransaction) {
+} () -> (
+        pending_multisig_transaction: PendingMultisigTransaction,
+        signer_ids_len: felt,
+        signer_ids: felt*,
+) {
     alloc_locals;
     let (block_timestamp) = get_block_timestamp();
     Account._migrate_storage_if_needed();
     Multisig.apply_elapsed_etd_requests(block_timestamp);
 
-    let (pending_multisig_transaction) = Multisig.get_pending_multisig_transaction();
-    return (pending_multisig_transaction = pending_multisig_transaction);
+    return Multisig.get_pending_multisig_transaction(); 
 }
 
 @external
@@ -383,8 +434,9 @@ func disable_multisig{
     range_check_ptr
 }() -> () {
     Guards.assert_only_self();
+    let (num_ext_account_signers) = Signers_num_ext_account_signers.read();
 
-    return Multisig.disable_multisig();
+    return Multisig.disable_multisig(num_ext_account_signers);
 }
 
 @external
@@ -424,6 +476,41 @@ func cancel_deferred_disable_multisig_req{
     return Multisig.cancel_deferred_disable_multisig_req();
 }
 
+@view
+func get_intermediate_ext_account_signer_max_validation_fee{
+    syscall_ptr: felt*,
+    pedersen_ptr: HashBuiltin*,
+    range_check_ptr,
+}() -> (res: felt) {
+
+    return (MULTISIG_MOA_MAX_VALIDATE_FEE_FOR_PRE_EXEC_SIGNER, );
+}
+
+@view
+func get_ext_account_signer_daily_transaction_limit{
+    syscall_ptr: felt*,
+    pedersen_ptr: HashBuiltin*,
+    range_check_ptr,
+}() -> (res: felt) {
+
+    return (ACCOUNT_MOA_DAILY_TXN_LIMIT, );
+}
+
+@view
+func assert_expected_max_fee{
+    syscall_ptr: felt*,
+    pedersen_ptr: HashBuiltin*,
+    range_check_ptr,
+}(expected_max_fee: felt) -> () {
+    // Since this entrypoint only checks the max fee and doesn't
+    // change state, we save the gas of asserting only self
+    with_attr error_message("Account: transaction max fee exceeds expected max fee") {
+        let (tx_info) = get_tx_info();
+        assert_le(tx_info.max_fee, expected_max_fee);
+    }
+
+    return ();
+}
 
 // Account entrypoints
 @external
@@ -450,13 +537,14 @@ func __validate__{
     let is_estfee = is_le_felt(TX_VERSION_1_EST_FEE, tx_info.version);
 
     let (num_secp256r1_signers) = Account_signers_num_hw_signers.read();
+    let (num_ext_account_signers) = Signers_num_ext_account_signers.read();
     let (local multi_signers_len, local multi_signers) = Signers.resolve_signers_from_sig(
             tx_info.signature_len, tx_info.signature);
 
     let (account_valid) = Account.account_validate(
         call_array_len, call_array,
         calldata_len, calldata,
-        tx_info);
+        tx_info, num_ext_account_signers);
     assert account_valid = TRUE;
 
     let (multisig_valid, in_multisig_mode) = Multisig.multisig_validate(
@@ -464,7 +552,7 @@ func __validate__{
         calldata,
         tx_info, block_timestamp, block_num, is_estfee,
         multi_signers_len, multi_signers,
-        num_secp256r1_signers,);
+        num_secp256r1_signers, num_ext_account_signers);
     assert multisig_valid = TRUE;
 
     let (signers_valid) = Signers.signers_validate(
@@ -472,7 +560,7 @@ func __validate__{
         calldata_len, calldata,
         tx_info, block_timestamp, block_num, is_estfee,
         multi_signers_len, multi_signers,
-        in_multisig_mode, num_secp256r1_signers);
+        in_multisig_mode, num_secp256r1_signers, num_ext_account_signers);
     assert signers_valid = TRUE;
 
     return ();
@@ -527,6 +615,7 @@ func __execute__{
     syscall_ptr: felt*,
     pedersen_ptr: HashBuiltin*,
     range_check_ptr,
+    ecdsa_ptr: SignatureBuiltin*,
 }(
     call_array_len: felt, call_array: AccountCallArray*,
     calldata_len: felt, calldata: felt*
@@ -542,7 +631,11 @@ func __execute__{
      // should be removed when v0 is dropped
     Guards.assert_valid_transaction_version(tx_info);
 
-    // Handle multisig case (currently only 1 additional signer)
+    let (signers_exec_res) = Signers.signers_execute(tx_info);
+    with_attr error_message("Account: signers module execution failure") {
+        assert signers_exec_res = TRUE;
+    }
+
     let (multisig_deferred) = Multisig.multisig_execute(
         call_array_len, call_array, tx_info
     );

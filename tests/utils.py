@@ -1,3 +1,4 @@
+from collections import namedtuple
 from functools import reduce
 import math
 from os import environ
@@ -271,6 +272,74 @@ async def deploy_account_txn(
         ),
         res.call_info,
     )
+
+
+def create_ext_signer_wrapper(
+        signer_id,
+        ext_stark_signer,
+        ext_hws_signer=None,
+        ext_hws_signer_id=None,
+        invalid_sig=False,
+):
+    hash_mod = 1 if invalid_sig else 0
+    return namedtuple('SignerWrapper', ['sign'])(lambda hash: [
+        signer_id,
+        *ext_stark_signer.sign(hash),
+        signer_id,
+        *([5] if ext_hws_signer else [3]),
+        *([ext_hws_signer_id] if ext_hws_signer else [0]),
+        *(ext_hws_signer.sign(hash + hash_mod) if ext_hws_signer else ext_stark_signer.sign(hash + hash_mod)),
+    ])
+
+
+def create_raw_txn_with_fee_validation(account, entrypoint, calldata, max_fee):
+    return [
+        2,
+        account.contract_address,
+        get_selector_from_name("assert_expected_max_fee"),
+        0,
+        1,
+        account.contract_address,
+        get_selector_from_name(entrypoint),
+        1,
+        len(calldata),
+        len(calldata) + 1,
+        max_fee,
+        *calldata
+    ] if max_fee is not None else [
+        1,
+        account.contract_address,
+        get_selector_from_name(entrypoint),
+        0,
+        len(calldata),
+        len(calldata),
+        *calldata,
+    ]
+
+
+def create_sign_pending_multisig_txn_call_from_original_call(
+        account,
+        orig_raw_calldata,
+        orig_nonce,
+        orig_max_fee = 0,
+):
+    # populate according to sign_pending_multisig_transaction api
+    raw_calldata = [
+        len(orig_raw_calldata),     # calldata_len
+        *orig_raw_calldata,         # calldata
+        orig_nonce,                 # pending nonce
+        orig_max_fee,                          # pending max fee
+        1,                          # pending txn ver
+    ]
+    return [
+        1,
+        account.contract_address,
+        get_selector_from_name("sign_pending_multisig_transaction"),
+        0,
+        len(raw_calldata),
+        len(raw_calldata),
+        *raw_calldata,
+    ]
 
 
 async def send_raw_invoke(
