@@ -1336,7 +1336,7 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
                 ],
             ]
         ),
-        "no pending multisig transaction",
+        "no pending transaction to sign",
     )
 
     # But allow estimate fee with seed with any calldata
@@ -1552,7 +1552,6 @@ async def test_multisig_2_signers_in_single_sig(init_contracts):
     )
 
 
-
 @pytest.mark.asyncio
 async def test_multisig_override_pending_txn(init_contracts):
     _, _, account1, _, _ = init_contracts
@@ -1586,13 +1585,12 @@ async def test_multisig_override_pending_txn(init_contracts):
     deferred_txn_1 = execution_info.result.pending_multisig_transaction
 
     # seed signer overrides
-    response = await signer.send_transactions(
-        account1, [(account1.contract_address, "getPublicKey", [])]
+    await assert_revert(
+        signer.send_transactions(
+            account1, [(account1.contract_address, "getPublicKey", [])]
+        ),
+        "seed signer cannot override pending transactions",
     )
-    assert response.call_info.retdata[0] == 0
-    execution_info = await account1.get_pending_multisig_transaction().call()
-    deferred_txn_2 = execution_info.result.pending_multisig_transaction
-    assert deferred_txn_1.transaction_hash != deferred_txn_2.transaction_hash
 
 
 @pytest.mark.asyncio
@@ -1729,7 +1727,7 @@ async def test_multisig_discard_expired_pending_txn(init_contracts):
                 ),
             ],
         ),
-        "no pending multisig transaction",
+        "no pending transaction to sign",
     )
 
 
@@ -1759,14 +1757,16 @@ async def test_multisig_disable(init_contracts, disable_multisig_initiator):
     )
     signer_id = response.call_info.retdata[1]
 
-    # Create a pending txn
-    response = await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "getPublicKey", [])]
-    )
-    assert response.call_info.retdata[0] == 0
-
-    # Override pending with disable multisig (nonce == 3)
+    # Create a pending txn only for secp256r1 signer
+    # seed is not allowed to override
     if disable_multisig_initiator == "secp256r1":
+        response = await ecc_signer.send_transactions(
+         account1, signer_id, [(account1.contract_address, "getPublicKey", [])]
+         )
+        assert response.call_info.retdata[0] == 0
+
+    if disable_multisig_initiator == "secp256r1":
+        # Override pending with disable multisig (nonce == 3)
         response = await ecc_signer.send_transactions(
             account1, signer_id, [(account1.contract_address, "disable_multisig", [])]
         )
@@ -1786,7 +1786,7 @@ async def test_multisig_disable(init_contracts, disable_multisig_initiator):
                     (account1.contract_address, "getPublicKey", []),
                 ],
             ),
-            "invalid entry point for seed signing",
+            "seed signer cannot override pending transactions",
         )
 
         # should be ok
@@ -1813,7 +1813,7 @@ async def test_multisig_disable(init_contracts, disable_multisig_initiator):
                 0,
                 0,
                 # pending nonce
-                3,
+                3 if disable_multisig_initiator == "secp256r1" else 2,
                 # pending max fee
                 0,
                 # txn ver

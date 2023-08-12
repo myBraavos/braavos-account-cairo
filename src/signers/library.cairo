@@ -10,7 +10,7 @@ from starkware.cairo.common.math import (
     assert_not_zero,
     split_felt,
 )
-from starkware.cairo.common.math_cmp import is_le_felt, is_not_zero
+from starkware.cairo.common.math_cmp import is_le, is_not_zero
 from starkware.cairo.common.signature import verify_ecdsa_signature
 from starkware.cairo.common.uint256 import Uint256, uint256_check
 from starkware.starknet.common.syscalls import (
@@ -109,7 +109,7 @@ namespace Signers {
     }(
         current_id: felt, max_id: felt, signers: IndexedSignerModel*
     ) -> (num_signers: felt) {
-        let current_id_overflow = is_le_felt(current_id, max_id);
+        let current_id_overflow = is_le(current_id, max_id);
         if (current_id_overflow == FALSE) {
             return (num_signers=0);
         }
@@ -297,24 +297,6 @@ namespace Signers {
             assert removed_signer.type = SIGNER_TYPE_SECP256R1;
         }
 
-        // For now we limit this API to seed signer only as it has no functional meaning with secp256r1
-        let (tx_info) = get_tx_info();
-        let (multi_signers_len, multi_signers) = Signers.resolve_signers_from_sig(
-            tx_info.signature_len, tx_info.signature
-        );
-        with_attr error_message(
-                "Signers: remove_signer_with_etd should be called with seed signer") {
-            assert multi_signers_len = 1;
-            assert multi_signers[0].signer.type = SIGNER_TYPE_STARK;
-        }
-
-        // We dont want to allow endless postponement of etd removals, once
-        // there's an etd it should either finish or cancelled
-        let (remove_signer_req) = Account_deferred_remove_signer.read();
-        with_attr error_message("Signers: already have a pending remove signer request") {
-            assert remove_signer_req.expire_at = 0;
-        }
-
         let (block_timestamp) = get_block_timestamp();
         with_attr error_message("Signers: etd not initialized") {
             assert_not_zero(account_etd);
@@ -419,7 +401,7 @@ namespace Signers {
     }(block_timestamp: felt) -> () {
         let (remove_signer_req) = Account_deferred_remove_signer.read();
         let have_remove_signer_etd = is_not_zero(remove_signer_req.expire_at);
-        let remove_signer_etd_expired = is_le_felt(remove_signer_req.expire_at, block_timestamp);
+        let remove_signer_etd_expired = is_le(remove_signer_req.expire_at, block_timestamp);
 
         if (have_remove_signer_etd * remove_signer_etd_expired == TRUE) {
             remove_signer(remove_signer_req.signer_id);
@@ -438,7 +420,7 @@ namespace Signers {
         call_array_len: felt, call_0_to: felt, call_0_sel: felt,
         calldata_len: felt, calldata: felt*,
         tx_info: TxInfo*, block_timestamp: felt, block_num: felt,
-        in_multisig_mode,
+        in_multisig_mode: felt, is_estfee: felt,
     ) -> (valid: felt) {
         // Authorize Signer
         _authorize_signer(
@@ -450,7 +432,7 @@ namespace Signers {
         );
 
         // For estimate fee txns we skip sig validation - client side should account for it
-        if (is_le_felt(TX_VERSION_1_EST_FEE, tx_info.version) == TRUE) {
+        if (is_estfee == TRUE) {
             return (valid = TRUE);
         }
 
@@ -511,13 +493,15 @@ namespace Signers {
 
         // 1. Limit seed signer only to ETD signer removal
         with_attr error_message("Signers: invalid entry point for seed signing") {
+            assert call_array_len = 1;
             assert call_0_to = self;
             assert call_0_sel = REMOVE_SIGNER_WITH_ETD_SELECTOR;
         }
-        with_attr error_message("Signers: only a single call is allowed with seed signing") {
-            assert call_array_len = 1;
+        // 2. Fail if there's already a pending remove signer req
+        with_attr error_message("Signers: already have a pending remove signer request") {
+            let (remove_signer_req) = Account_deferred_remove_signer.read();
+            assert remove_signer_req.expire_at = 0;
         }
-
         return ();
     }
 

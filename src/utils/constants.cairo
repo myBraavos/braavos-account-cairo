@@ -1,13 +1,4 @@
-// SPDX-License-Identifier: MIT
-// OpenZeppelin Contracts for Cairo v0.1.0 (utils/constants.cairo)
-
 %lang starknet
-
-//
-// Numbers
-//
-
-const UINT8_MAX = 256;
 
 //
 // Interface Ids
@@ -46,8 +37,3 @@ const TX_VERSION_0_EST_FEE = 340282366920938463463374607431768211456;
 const TX_VERSION_1 = 1;
 const TX_VERSION_1_EST_FEE = 340282366920938463463374607431768211457;
 
-// ERC721
-const IERC721_ID = 0x80ac58cd;
-const IERC721_RECEIVER_ID = 0x150b7a02;
-const IERC721_METADATA_ID = 0x5b5e139f;
-const IERC721_ENUMERABLE_ID = 0x780e9d63;

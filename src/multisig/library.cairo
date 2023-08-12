@@ -11,7 +11,11 @@ from starkware.cairo.common.hash_state import (
     hash_finalize,
 )
 from starkware.cairo.common.math import assert_not_zero
-from starkware.cairo.common.math_cmp import is_le_felt, is_not_zero
+from starkware.cairo.common.math_cmp import (
+    is_le,
+    is_le_felt,
+    is_not_zero,
+)
 from starkware.starknet.common.constants import INVOKE_HASH_PREFIX
 from starkware.starknet.common.syscalls import (
     emit_event,
@@ -28,6 +32,7 @@ from src.account.library import (
     Call,
 )
 from src.signers.library import (
+    Account_deferred_remove_signer,
     Account_signers_num_hw_signers,
     Signers
 )
@@ -137,7 +142,10 @@ namespace Multisig {
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
         range_check_ptr
-    }(selector: felt, tx_info: TxInfo*) -> (multisig_deferred: felt) {
+    }(
+        call_array_len: felt, call_array: AccountCallArray*,
+        tx_info: TxInfo*
+    ) -> (multisig_deferred: felt) {
         alloc_locals;
         let (multisig_num_signers) = Multisig_num_signers.read();
 
@@ -156,12 +164,9 @@ namespace Multisig {
         let (block_num) = get_block_number();
         let current_signer = multi_signers[0];
 
-        let (pending_multisig_txn: PendingMultisigTransaction) = Multisig_pending_transaction.read();
-        tempvar is_disable_multisig_selector = 1 - is_not_zero(selector - DISABLE_MULTISIG_SELECTOR);
-
         // selector values below should be handled in current execute flow and not be deferred
         // since we are checking on selector, only one of these will be 1 or all 0
-        let allowed_selector = is_allowed_selector_for_seed_in_multisig(selector);
+        let (allowed_selector, _, _, _) = is_allowed_selector_for_seed_in_multisig(call_array[0].to, call_array[0].selector);
         if (allowed_selector == TRUE) {
             return (multisig_deferred=FALSE);
         }
@@ -175,7 +180,7 @@ namespace Multisig {
                 expire_at_sec = expire_at_sec,
                 expire_at_block_num = expire_at_block_num,
                 signer_1_id = current_signer.index,
-                is_disable_multisig_transaction = is_disable_multisig_selector,
+                is_disable_multisig_transaction = 0,
         );
         Multisig_pending_transaction.write(pendingTxn);
 
@@ -421,7 +426,20 @@ namespace Multisig {
         return ();
     }
 
-    func is_allowed_selector_for_seed_in_multisig(selector: felt) -> felt {
+    func is_allowed_selector_for_seed_in_multisig{syscall_ptr: felt*}(
+        to: felt,
+        selector: felt
+    ) -> (
+        is_allowed: felt,
+        is_sign_pending: felt,
+        is_disable_multisig_with_etd: felt,
+        is_remove_signer_with_etd: felt
+    ) {
+        let (self) = get_contract_address();
+        if (to != self) {
+            return (FALSE, FALSE, FALSE, FALSE);
+        }
+
         tempvar is_sign_pending_selector = 1 - is_not_zero(
             selector - SIGN_PENDING_MULTISIG_TXN_SELECTOR);
         tempvar is_disable_multisig_with_etd_selector = 1 - is_not_zero(
@@ -430,9 +448,14 @@ namespace Multisig {
             selector - REMOVE_SIGNER_WITH_ETD_SELECTOR);
         // Only one of the above will be 1 as we are comparing the same selector
         return  (
-            is_sign_pending_selector +
-            is_disable_multisig_with_etd_selector +
-            is_remove_signer_with_etd_selector
+            is_allowed = (
+                is_sign_pending_selector +
+                is_disable_multisig_with_etd_selector +
+                is_remove_signer_with_etd_selector
+            ),
+            is_sign_pending = is_sign_pending_selector,
+            is_disable_multisig_with_etd = is_disable_multisig_with_etd_selector,
+            is_remove_signer_with_etd = is_remove_signer_with_etd_selector,
         );
 
     }
@@ -450,9 +473,9 @@ namespace Multisig {
         }
 
         // only if both block and time elapsed then discard the pending txn
-        let expiry_block_num_expired = is_le_felt(
+        let expiry_block_num_expired = is_le(
             pending_multisig_txn.expire_at_block_num, block_num);
-        let expiry_sec_expired = is_le_felt(
+        let expiry_sec_expired = is_le(
             pending_multisig_txn.expire_at_sec, block_timestamp);
         if (expiry_block_num_expired * expiry_sec_expired == TRUE) {
             let empty_pending_txn = PendingMultisigTransaction(
@@ -477,7 +500,7 @@ namespace Multisig {
     }(block_timestamp: felt) -> () {
         let (disable_multisig_req) = Multisig_deferred_disable_request.read();
         let have_disable_multisig_etd = is_not_zero(disable_multisig_req.expire_at);
-        let disable_multisig_etd_expired = is_le_felt(
+        let disable_multisig_etd_expired = is_le(
             disable_multisig_req.expire_at, block_timestamp);
 
         if (have_disable_multisig_etd * disable_multisig_etd_expired == TRUE) {
@@ -496,7 +519,7 @@ namespace Multisig {
     }(
         call_array_len: felt, call_array: AccountCallArray*,
         calldata_len: felt, calldata: felt*,
-        tx_info: TxInfo*, block_timestamp: felt, block_num: felt,
+        tx_info: TxInfo*, block_timestamp: felt, block_num: felt, is_estfee: felt,
     ) -> (valid: felt, is_multisig_mode: felt) {
         alloc_locals;
 
@@ -532,19 +555,38 @@ namespace Multisig {
 
         tempvar is_stark_signer = 1 - is_not_zero(
             current_signer.signer.type - SIGNER_TYPE_STARK);
+        let (
+            allowed_selector,
+            is_sign_pending,
+            is_disable_multisig_etd,
+            _
+        ) = is_allowed_selector_for_seed_in_multisig(call_array[0].to, call_array[0].selector);
+        let have_pending_txn = is_not_zero(pending_multisig_txn.transaction_hash);
 
-        // Protect against censorship when seed is stolen and tries to override
-        // pending multisig txns preventing the second signer from recovering the account.
-        // In this case, seed is only allowed to approve the txn or do ETD actions
-        let is_pending_txn_diff_signer = is_not_zero(
-            pending_multisig_txn.signer_1_id - current_signer.index);
-        with_attr error_message("Multisig: invalid entry point for seed signing") {
-            if ((is_stark_signer *
-                 is_pending_txn_diff_signer *
-                 pending_multisig_txn.is_disable_multisig_transaction) == TRUE) {
-                assert is_allowed_selector_for_seed_in_multisig([call_array].selector) = TRUE;
-            }
+        // Fail validate for invalid sign / etd invokes (REJECT instead of REVERT)
+        with_attr error_message("Multisig: no pending transaction to sign") {
+            // est fee or have pending txn or (not sign pending selector)
+            assert (1 - is_estfee) * (1 - have_pending_txn) * (is_sign_pending) = FALSE;
         }
+
+        with_attr error_message("Multisig: already have a pending disable multisig request") {
+            let (dm_etd) = Multisig_deferred_disable_request.read();
+            // (not dm etd selector) or (not have dm etd) 
+            assert is_disable_multisig_etd * is_not_zero(dm_etd.expire_at) = FALSE;
+        }
+
+        with_attr error_message("Multisig: disable_multisig_with_etd should be called with seed signer") {
+            // (not dm etd selector) or stark signer 
+            assert is_disable_multisig_etd * (1 - is_stark_signer) = FALSE;
+        }
+        // Don't allow seed signer to override txns - only to approve them
+        with_attr error_message("Multisig: seed signer cannot override pending transactions") {
+            // (not seed signer) or (no pending txn) or allowed_selector
+            assert is_stark_signer * have_pending_txn * (1 - allowed_selector) = FALSE;
+        }
+        // NOTE: The above limitation also protects against censorship when seed is stolen and
+        // override pending multisig txns preventing HWS signer from recovering the account.
+        // In this case, seed is only allowed to approve the txn or do ETD actions
 
         return (valid=TRUE, is_multisig_mode=TRUE);
     }

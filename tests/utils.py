@@ -17,6 +17,7 @@ from starkware.starknet.business_logic.execution.objects import (
     Event,
     TransactionExecutionInfo,
 )
+from starkware.starknet.business_logic.state.storage_domain import StorageDomain
 from starkware.starknet.business_logic.transaction.objects import (
     InternalInvokeFunction,
     InternalDeployAccount,
@@ -289,7 +290,10 @@ async def send_raw_invoke(
         assert not nonce, "Nonce should be a part of calldata in txn v0"
     else:
         nonce = nonce or (
-            await starknet_state.state.get_nonce_at(account.contract_address)
+            await starknet_state.state.get_nonce_at(
+                StorageDomain.ON_CHAIN,
+                account.contract_address,
+            )
         )
 
     if not signature:
@@ -332,7 +336,10 @@ class TestECCSigner:
     async def send_transactions(self, account, signer_id, calls, nonce=None, max_fee=0):
         starknet_state = account.state
         if nonce is None:
-            nonce = await starknet_state.state.get_nonce_at(account.contract_address)
+            nonce = await starknet_state.state.get_nonce_at(
+                StorageDomain.ON_CHAIN,
+                account.contract_address,
+            )
 
         execute_calldata = get_execute_calldata(calls)
         message_hash = get_invoke_hash(
@@ -379,7 +386,10 @@ class TestSigner:
     ):
         starknet_state = account.state
         if nonce is None:
-            nonce = await starknet_state.state.get_nonce_at(account.contract_address)
+            nonce = await starknet_state.state.get_nonce_at(
+                StorageDomain.ON_CHAIN,
+                account.contract_address,
+            )
 
         (execute_calldata, sig_r, sig_s) = self.signer.sign_invoke(
             account.contract_address, calls, nonce, max_fee
@@ -438,7 +448,10 @@ class TestSigner:
             assert not nonce, "Nonce should be a part of calldata in txn v0"
         else:
             nonce = nonce or (
-                await starknet_state.state.get_nonce_at(account.contract_address)
+                await starknet_state.state.get_nonce_at(
+                    StorageDomain.ON_CHAIN,
+                    account.contract_address,
+                )
             )
 
         if signature:
@@ -473,7 +486,10 @@ class TestSigner:
     ) -> TransactionExecutionInfo:
         starknet_state = account.state
         if nonce is None:
-            nonce = await starknet_state.state.get_nonce_at(account.contract_address)
+            nonce = await starknet_state.state.get_nonce_at(
+                StorageDomain.ON_CHAIN,    
+                account.contract_address,
+            )
 
         execute_calldata = get_execute_calldata(calls)
         txn_hash = calculate_transaction_hash_common(

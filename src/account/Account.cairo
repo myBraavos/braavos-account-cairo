@@ -11,7 +11,10 @@ from starkware.starknet.common.syscalls import (
     library_call,
 )
 from starkware.cairo.common.math import assert_not_zero
-from starkware.cairo.common.math_cmp import is_not_zero
+from starkware.cairo.common.math_cmp import (
+    is_le_felt,
+    is_not_zero,
+)
 
 from lib.openzeppelin.upgrades.library import Proxy
 from src.account.library import (
@@ -36,6 +39,7 @@ from src.utils.constants import (
     ACCOUNT_IMPL_VERSION,
     IACCOUNT_ID,
     SUPPORTS_INTERFACE_SELECTOR,
+    TX_VERSION_1_EST_FEE,
 )
 from src.utils.Guards import Guards
 
@@ -443,6 +447,7 @@ func __validate__{
     Account._migrate_storage_if_needed();
     Multisig.apply_elapsed_etd_requests(block_timestamp);
     Signers.apply_elapsed_etd_requests(block_timestamp);
+    let is_estfee = is_le_felt(TX_VERSION_1_EST_FEE, tx_info.version);
 
     let (account_valid) = Account.account_validate(
         call_array_len, call_array,
@@ -453,14 +458,14 @@ func __validate__{
     let (multisig_valid, in_multisig_mode) = Multisig.multisig_validate(
         call_array_len, call_array, calldata_len,
         calldata,
-        tx_info, block_timestamp, block_num);
+        tx_info, block_timestamp, block_num, is_estfee);
     assert multisig_valid = TRUE;
 
     let (signers_valid) = Signers.signers_validate(
         call_array_len, call_array[0].to, call_array[0].selector,
         calldata_len, calldata,
         tx_info, block_timestamp, block_num,
-        in_multisig_mode);
+        in_multisig_mode, is_estfee);
     assert signers_valid = TRUE;
 
     return ();
@@ -532,7 +537,7 @@ func __execute__{
 
     // Handle multisig case (currently only 1 additional signer)
     let (multisig_deferred) = Multisig.multisig_execute(
-        call_array[0].selector, tx_info
+        call_array_len, call_array, tx_info
     );
     if (multisig_deferred == TRUE) {
         let (empty_resp: felt*) = alloc();

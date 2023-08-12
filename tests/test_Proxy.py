@@ -4,6 +4,7 @@ import pytest_asyncio
 
 from starkware.cairo.lang.compiler.program import Program
 from starkware.cairo.lang.vm.crypto import pedersen_hash
+from starkware.starknet.business_logic.state.storage_domain import StorageDomain
 from starkware.starknet.core.os.contract_class.deprecated_class_hash import compute_deprecated_class_hash
 from starkware.starknet.public.abi import get_selector_from_name, starknet_keccak
 from starkware.starknet.compiler.compile import create_starknet_contract_class
@@ -187,6 +188,7 @@ async def test_upgrade(proxy_init):
     assert execution_info.result.res == target_ver_felt
 
     storage_migration_var = await account_after_upgrade.state.state.get_storage_at(
+        StorageDomain.ON_CHAIN,
         account_after_upgrade.contract_address,
         starknet_keccak(b"Account_storage_migration_version"),
     )
@@ -273,13 +275,16 @@ async def test_upgrade_regenesis(proxy_init):
     assert execution_info.result.res == target_ver_felt
 
     storage_migration_var = await account_after_upgrade.state.state.get_storage_at(
+        StorageDomain.ON_CHAIN,
         account_after_upgrade.contract_address,
         starknet_keccak(b"Account_storage_migration_version"),
     )
     assert storage_migration_var == target_ver_felt
 
-    # FIXME: NOTE TO REVIEWER - FAIL IF STILL EXISTS
-    # Add verification that replace class did work and upgraded to cairo 1
+    upgraded_chash = await account_after_upgrade.state.state.get_class_hash_at(
+        account_after_upgrade.contract_address,
+    )
+    assert upgraded_chash == account_class_w_ver_decl.class_hash
 
 
 @pytest.mark.asyncio

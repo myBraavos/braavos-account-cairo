@@ -152,9 +152,6 @@ namespace Account {
             calldata=calldata + 1,
         );
 
-        // FIXME: NOTE TO REVIEWER - FAIL CR IF STILL EXISTS
-        // EMIT STANDARD EVENT (OwnerChanged?) TO FIND THE ACCOUNT
-
         // We are not going through proxy lib here, so emit the upgrade
         // event here
         Upgraded.emit(new_implementation);
