@@ -560,6 +560,19 @@ namespace Multisig {
         if (multi_signers_len == 2) {
             return (valid=TRUE, is_multisig_mode=TRUE);
         }
+        // In ext account signers mode, the first call is expected to be an assertion on the
+        // expected max fee of the execution to avoid gas drainage by a malicious / compromised
+        // last (executing) signer
+        let (
+            non_deferred_selector,
+            is_sign_pending,
+            is_disable_multisig_etd,
+            _
+        ) = is_non_deferred_selector_in_multisig(call_array[0].to, call_array[0].selector);
+        let (pending_multisig_txn) = discard_expired_multisig_pending_transaction(
+            pending_multisig_txn,
+            block_num, block_timestamp,
+        );
 
         let (
             non_deferred_selector,
