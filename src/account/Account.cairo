@@ -449,6 +449,10 @@ func __validate__{
     Signers.apply_elapsed_etd_requests(block_timestamp);
     let is_estfee = is_le_felt(TX_VERSION_1_EST_FEE, tx_info.version);
 
+    let (num_secp256r1_signers) = Account_signers_num_hw_signers.read();
+    let (local multi_signers_len, local multi_signers) = Signers.resolve_signers_from_sig(
+            tx_info.signature_len, tx_info.signature);
+
     let (account_valid) = Account.account_validate(
         call_array_len, call_array,
         calldata_len, calldata,
@@ -458,14 +462,17 @@ func __validate__{
     let (multisig_valid, in_multisig_mode) = Multisig.multisig_validate(
         call_array_len, call_array, calldata_len,
         calldata,
-        tx_info, block_timestamp, block_num, is_estfee);
+        tx_info, block_timestamp, block_num, is_estfee,
+        multi_signers_len, multi_signers,
+        num_secp256r1_signers,);
     assert multisig_valid = TRUE;
 
     let (signers_valid) = Signers.signers_validate(
         call_array_len, call_array[0].to, call_array[0].selector,
         calldata_len, calldata,
-        tx_info, block_timestamp, block_num,
-        in_multisig_mode, is_estfee);
+        tx_info, block_timestamp, block_num, is_estfee,
+        multi_signers_len, multi_signers,
+        in_multisig_mode, num_secp256r1_signers);
     assert signers_valid = TRUE;
 
     return ();
@@ -540,8 +547,7 @@ func __execute__{
         call_array_len, call_array, tx_info
     );
     if (multisig_deferred == TRUE) {
-        let (empty_resp: felt*) = alloc();
-        return (response_len=0, response=empty_resp);
+        return (response_len=0, response=cast(0, felt*));
     }
 
     let (response_len, response) = Account.execute(

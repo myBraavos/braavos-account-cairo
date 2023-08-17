@@ -44,15 +44,22 @@ async def proxy_init(contract_defs):
     proxy_def, account_def, account_base_impl_def = contract_defs
     starknet = await Starknet.empty()
 
+    proxy_decl = await starknet.deprecated_declare(contract_class=proxy_def, )
+
     account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def, )
 
     account_actual_impl = await starknet.deprecated_declare(
         contract_class=account_def, )
 
-    account1, call_info = await deploy_account_txn(starknet, signer, proxy_def,
-                                                   account_base_impl_decl,
-                                                   account_actual_impl)
+    account1, call_info = await deploy_account_txn(
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_actual_impl,
+    )
 
     proxy = StarknetContract(
         state=starknet.state,
@@ -61,10 +68,14 @@ async def proxy_init(contract_defs):
         constructor_call_info=call_info,
     )
 
-    account2, call_info = await deploy_account_txn(starknet, signer2,
-                                                   proxy_def,
-                                                   account_base_impl_decl,
-                                                   account_actual_impl)
+    account2, call_info = await deploy_account_txn(
+        starknet,
+        signer2,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_actual_impl,
+    )
 
     proxy2 = StarknetContract(
         state=starknet.state,
@@ -282,8 +293,7 @@ async def test_upgrade_regenesis(proxy_init):
     assert storage_migration_var == target_ver_felt
 
     upgraded_chash = await account_after_upgrade.state.state.get_class_hash_at(
-        account_after_upgrade.contract_address,
-    )
+        account_after_upgrade.contract_address, )
     assert upgraded_chash == account_class_w_ver_decl.class_hash
 
 
@@ -490,6 +500,8 @@ async def test_signer_type_3_migration_from_v000_000_009(
         account_class_with_type_3_decl = await starknet.deprecated_declare(
             contract_class=account_class_with_type_3, )
 
+    proxy_decl = await starknet.deprecated_declare(contract_class=proxy_def, )
+
     account_base_impl_decl = await starknet.deprecated_declare(
         contract_class=account_base_impl_def, )
 
@@ -509,6 +521,7 @@ async def test_signer_type_3_migration_from_v000_000_009(
         starknet,
         signer,
         proxy_def,
+        proxy_decl,
         account_base_impl_decl,
         account_class_with_type_3_decl,
         hw_signer=signer_payload,
@@ -537,6 +550,3 @@ async def test_signer_type_3_migration_from_v000_000_009(
     hw_signers = [x for x in all_signers if x[5] == 2]
     assert len(hw_signers) == 1 and len(all_signers) == 2
 
-
-# TODO: verify we emit an event on key change (constructor + ?set_public_key?)
-# TODO: add check for deploying a valid/non-valid account (i.e.: not IACCOUNT_ID)

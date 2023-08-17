@@ -32,9 +32,9 @@ from src.account.library import (
     Call,
 )
 from src.signers.library import (
-    Account_deferred_remove_signer,
     Account_signers_num_hw_signers,
-    Signers
+    IndexedSignerModel,
+    Signers,
 )
 from src.utils.constants import (
     ACCOUNT_DEFAULT_EXECUTION_TIME_DELAY_SEC,
@@ -58,8 +58,7 @@ struct PendingMultisigTransaction {
     // so no need to keep track of multiple signers - in the future:
     // signers: felt* (this is not possible in Starknet storage, maybe a bit map?)
     signer_1_id: felt,
-    // We need to know whether pending multisig txn is disable to prevent
-    // censorship when seed is stolen - see _authorize_signer
+    // deprecated
     is_disable_multisig_transaction: felt,
 
 }
@@ -152,22 +151,24 @@ namespace Multisig {
         if (multisig_num_signers == 0) {
             return (multisig_deferred=FALSE);
         }
-        // we are in multisig mode, but sig contains both signers so don't defer
-        // note that at this point, the multi-signer sig was validated
         let (multi_signers_len, multi_signers) = Signers.resolve_signers_from_sig(
             tx_info.signature_len, tx_info.signature
         );
+
+        // sig contains multiple signers
+        // already validated in multisig_validate, Signers.is_valid_sig* and Signers.resolve_signers_from_sig
         if (multi_signers_len == 2) {
             return (multisig_deferred=FALSE);
         }
+
         let (block_timestamp) = get_block_timestamp();
         let (block_num) = get_block_number();
         let current_signer = multi_signers[0];
 
         // selector values below should be handled in current execute flow and not be deferred
         // since we are checking on selector, only one of these will be 1 or all 0
-        let (allowed_selector, _, _, _) = is_allowed_selector_for_seed_in_multisig(call_array[0].to, call_array[0].selector);
-        if (allowed_selector == TRUE) {
+        let (non_deferred_selector, _, _, _) = is_non_deferred_selector_in_multisig(call_array[0].to, call_array[0].selector);
+        if (non_deferred_selector == TRUE) {
             return (multisig_deferred=FALSE);
         }
 
@@ -205,6 +206,43 @@ namespace Multisig {
         return (pending_multisig_transaction = pending_multisig_transaction);
     }
 
+    func execute_pending_multisig_txn{
+        syscall_ptr: felt*,
+        pedersen_ptr: HashBuiltin*,
+        range_check_ptr
+    }(
+        pending_multisig_txn: PendingMultisigTransaction,
+        pending_calldata_len: felt, pending_calldata: felt*,
+   ) -> (response_len: felt, response: felt*) {
+        alloc_locals;
+        // clear the pending txn and emit the event
+        Multisig_pending_transaction.write(PendingMultisigTransaction(
+            transaction_hash=0,
+            expire_at_sec=0,
+            expire_at_block_num=0,
+            signer_1_id=0,
+            is_disable_multisig_transaction=0,
+        ));
+
+        // Convert `AccountCallArray` to 'Call'
+        // we know pending_calldata is compatible with __execute__'s input
+        let call_array_len = pending_calldata[0];
+        let call_array = cast(pending_calldata + 1, AccountCallArray*);
+        let (calls: Call*) = alloc();
+        Account._from_call_array_to_call(
+            call_array_len,
+            call_array,
+            pending_calldata + call_array_len *  AccountCallArray.SIZE + 2,
+            calls
+        );
+        let calls_len = pending_calldata[0];
+
+        // execute call
+        let (response: felt*) = alloc();
+        let (response_len) = Account._execute_list(calls_len, calls, response);
+
+        return (response_len=response_len, response=response);
+    }
     func sign_pending_multisig_transaction{
         syscall_ptr: felt*,
         pedersen_ptr: HashBuiltin*,
@@ -260,14 +298,6 @@ namespace Multisig {
             }
         }
 
-        // clear the pending txn and emit the event
-        Multisig_pending_transaction.write(PendingMultisigTransaction(
-            transaction_hash=0,
-            expire_at_sec=0,
-            expire_at_block_num=0,
-            signer_1_id=0,
-            is_disable_multisig_transaction=0,
-        ));
         let (local pendingTxnSignedEvtKeys: felt*) = alloc();
         assert [pendingTxnSignedEvtKeys]  = MultisigPendingTransactionSignedSelector;
         assert [pendingTxnSignedEvtKeys + 1] = computed_hash;
@@ -275,24 +305,10 @@ namespace Multisig {
         assert [pendingTxnSignedEvtData] = multi_signers[0].index;
         emit_event(2, pendingTxnSignedEvtKeys, 1, pendingTxnSignedEvtData);
 
-        // Convert `AccountCallArray` to 'Call'
-        // we know pending_calldata is compatible with __execute__'s input
-        let call_array_len = pending_calldata[0];
-        let call_array = cast(pending_calldata + 1, AccountCallArray*);
-        let (calls: Call*) = alloc();
-        Account._from_call_array_to_call(
-            call_array_len,
-            call_array,
-            pending_calldata + call_array_len *  AccountCallArray.SIZE + 2,
-            calls
+        return execute_pending_multisig_txn(pending_multisig_transaction,
+            pending_calldata_len,
+            pending_calldata,
         );
-        let calls_len = pending_calldata[0];
-
-        // execute call
-        let (response: felt*) = alloc();
-        let (response_len) = Account._execute_list(calls_len, calls, response);
-
-        return (response_len=response_len, response=response);
     }
 
     func _compute_hash{
@@ -426,11 +442,11 @@ namespace Multisig {
         return ();
     }
 
-    func is_allowed_selector_for_seed_in_multisig{syscall_ptr: felt*}(
+    func is_non_deferred_selector_in_multisig{syscall_ptr: felt*}(
         to: felt,
         selector: felt
     ) -> (
-        is_allowed: felt,
+        is_non_deferred: felt,
         is_sign_pending: felt,
         is_disable_multisig_with_etd: felt,
         is_remove_signer_with_etd: felt
@@ -448,7 +464,7 @@ namespace Multisig {
             selector - REMOVE_SIGNER_WITH_ETD_SELECTOR);
         // Only one of the above will be 1 as we are comparing the same selector
         return  (
-            is_allowed = (
+            is_non_deferred = (
                 is_sign_pending_selector +
                 is_disable_multisig_with_etd_selector +
                 is_remove_signer_with_etd_selector
@@ -520,47 +536,46 @@ namespace Multisig {
         call_array_len: felt, call_array: AccountCallArray*,
         calldata_len: felt, calldata: felt*,
         tx_info: TxInfo*, block_timestamp: felt, block_num: felt, is_estfee: felt,
+        multi_signers_len: felt, multi_signers: IndexedSignerModel*,
+        num_secp256r1_signers: felt,
     ) -> (valid: felt, is_multisig_mode: felt) {
         alloc_locals;
-
         let (num_multisig_signers) = Multisig_num_signers.read();
         let is_multisig_mode = is_not_zero(num_multisig_signers);
         if (is_multisig_mode == FALSE) {
             return (valid=TRUE, is_multisig_mode=FALSE);
         }
 
-        let (num_additional_signers) = Account_signers_num_hw_signers.read();
-        let have_additional_signers = is_not_zero(num_additional_signers);
-        if (have_additional_signers == FALSE) {
+        if (num_secp256r1_signers == 0) {
             // This will happen when remove signer with etd was not bundled
             // with a disable multisig with etd, so we handle it here.
             disable_multisig();
             return (valid=TRUE, is_multisig_mode=FALSE);
         }
 
-
+        // From this point on, we are definitely in multisig mode
         let (pending_multisig_txn) = Multisig_pending_transaction.read();
-        let (pending_multisig_txn) = discard_expired_multisig_pending_transaction(
-            pending_multisig_txn,
-            block_num, block_timestamp
-        );
 
-        let (multi_signers_len, multi_signers) = Signers.resolve_signers_from_sig(
-            tx_info.signature_len, tx_info.signature);
+        // In case more than one signature was sent atomically, enforce that at least m signers were sent.
         if (multi_signers_len == 2) {
             return (valid=TRUE, is_multisig_mode=TRUE);
         }
+
+        let (
+            non_deferred_selector,
+            is_sign_pending,
+            is_disable_multisig_etd,
+            _
+        ) = is_non_deferred_selector_in_multisig(call_array[0].to, call_array[0].selector);
+        let (pending_multisig_txn) = discard_expired_multisig_pending_transaction(
+            pending_multisig_txn,
+            block_num, block_timestamp,
+        );
 
         let current_signer = multi_signers[0];
 
         tempvar is_stark_signer = 1 - is_not_zero(
             current_signer.signer.type - SIGNER_TYPE_STARK);
-        let (
-            allowed_selector,
-            is_sign_pending,
-            is_disable_multisig_etd,
-            _
-        ) = is_allowed_selector_for_seed_in_multisig(call_array[0].to, call_array[0].selector);
         let have_pending_txn = is_not_zero(pending_multisig_txn.transaction_hash);
 
         // Fail validate for invalid sign / etd invokes (REJECT instead of REVERT)
@@ -571,18 +586,18 @@ namespace Multisig {
 
         with_attr error_message("Multisig: already have a pending disable multisig request") {
             let (dm_etd) = Multisig_deferred_disable_request.read();
-            // (not dm etd selector) or (not have dm etd) 
+            // (not dm etd selector) or (not have dm etd)
             assert is_disable_multisig_etd * is_not_zero(dm_etd.expire_at) = FALSE;
         }
 
         with_attr error_message("Multisig: disable_multisig_with_etd should be called with seed signer") {
-            // (not dm etd selector) or stark signer 
+            // (not dm etd selector) or stark signer
             assert is_disable_multisig_etd * (1 - is_stark_signer) = FALSE;
         }
         // Don't allow seed signer to override txns - only to approve them
         with_attr error_message("Multisig: seed signer cannot override pending transactions") {
-            // (not seed signer) or (no pending txn) or allowed_selector
-            assert is_stark_signer * have_pending_txn * (1 - allowed_selector) = FALSE;
+            // (not seed signer) or (no pending txn) or non_deferred_selector
+            assert is_stark_signer * have_pending_txn * (1 - non_deferred_selector) = FALSE;
         }
         // NOTE: The above limitation also protects against censorship when seed is stolen and
         // override pending multisig txns preventing HWS signer from recovering the account.

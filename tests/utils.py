@@ -201,12 +201,12 @@ async def deploy_account_txn(
     starknet,
     stark_signer,
     proxy_def,
+    proxy_decl,
     account_base_impl,
     account_actual_impl,
     hw_signer=None,
     salt=None,
 ):
-    proxy_decl = await starknet.deprecated_declare(contract_class=proxy_def)
     salt = salt or stark_signer.public_key
 
     deploy_account_txn_ctor_calldata = [
@@ -315,7 +315,7 @@ async def send_raw_invoke(
         sender_address=account.contract_address,
         entry_point_selector=selector,
         calldata=calldata,
-        max_fee=0,
+        max_fee=max_fee,
         version=version,
         signature=list(signature),
         nonce=nonce,

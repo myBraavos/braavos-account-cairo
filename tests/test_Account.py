@@ -53,27 +53,49 @@ async def init_module_scoped_starknet():
 
 
 @pytest_asyncio.fixture(scope="module")
-async def init_module_scoped_secp256r1_accounts(
-    contract_defs, init_module_scoped_starknet
+async def init_module_scoped_account_declarations(
+    contract_defs,
+    init_module_scoped_starknet,
 ):
     starknet = init_module_scoped_starknet
     proxy_def, account_def, _, account_base_impl_def = contract_defs
 
+    proxy_decl = await starknet.deprecated_declare(contract_class=proxy_def)
+
     account_base_impl_decl = await starknet.deprecated_declare(
-        contract_class=account_base_impl_def,
-    )
+        contract_class=account_base_impl_def, )
 
     account_decl = await starknet.deprecated_declare(
-        contract_class=account_def,
+        contract_class=account_def, )
+
+    return (
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
     )
 
+
+@pytest_asyncio.fixture(scope="module")
+async def init_module_scoped_secp256r1_accounts(
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
+):
+    starknet = init_module_scoped_starknet
+    proxy_def, account_def, _, account_base_impl_def = contract_defs
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
     signer_type_id = 2
     ecc_signer = TestECCSigner()
     # We need the below to be able to create 2 different addresses
     signer = TestSigner(123456789987654321 + signer_type_id)
 
     account, call_info = await deploy_account_txn(
-        starknet, signer, proxy_def, account_base_impl_decl, account_decl
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
     )
 
     proxy = StarknetContract(
@@ -91,8 +113,7 @@ async def init_module_scoped_secp256r1_accounts(
         0,
     ]
     response = await signer.send_transactions(
-        proxy, [(proxy.contract_address, "add_signer", signer_payload)]
-    )
+        proxy, [(proxy.contract_address, "add_signer", signer_payload)])
     signer_id = response.call_info.retdata[1]
 
     return (
@@ -106,22 +127,22 @@ async def init_module_scoped_secp256r1_accounts(
 
 @pytest_asyncio.fixture(scope="module")
 async def init_module_scoped_starknet_account(
-    contract_defs, init_module_scoped_starknet
+    contract_defs,
+    init_module_scoped_starknet,
+    init_module_scoped_account_declarations,
 ):
     starknet = init_module_scoped_starknet
     proxy_def, account_def, _, account_base_impl_def = contract_defs
-
-    account_base_impl_decl = await starknet.deprecated_declare(
-        contract_class=account_base_impl_def,
-    )
-
-    account_decl = await starknet.deprecated_declare(
-        contract_class=account_def,
-    )
+    proxy_decl, account_base_impl_decl, account_decl = init_module_scoped_account_declarations
 
     signer = TestSigner(123456789987654321)
     account, call_info = await deploy_account_txn(
-        starknet, signer, proxy_def, account_base_impl_decl, account_decl
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
     )
 
     _ = StarknetContract(
@@ -135,10 +156,10 @@ async def init_module_scoped_starknet_account(
     signer_id = 0
 
     malicious_def = get_contract_def("tests/aux/Malicious.cairo")
-    malicious_decl = await starknet.deprecated_declare(contract_class=malicious_def)
+    malicious_decl = await starknet.deprecated_declare(
+        contract_class=malicious_def)
     malicious_contract = await starknet.deploy(
-        class_hash=malicious_decl.class_hash, constructor_calldata=[]
-    )
+        class_hash=malicious_decl.class_hash, constructor_calldata=[])
 
     return (
         starknet,
@@ -156,15 +177,20 @@ async def init_contracts(contract_defs):
     starknet = await Starknet.empty()
 
     account_base_impl_decl = await starknet.deprecated_declare(
-        contract_class=account_base_impl_def,
-    )
+        contract_class=account_base_impl_def, )
 
     account_decl = await starknet.deprecated_declare(
-        contract_class=account_def,
-    )
+        contract_class=account_def, )
+
+    proxy_decl = await starknet.deprecated_declare(contract_class=proxy_def)
 
     account, call_info = await deploy_account_txn(
-        starknet, signer, proxy_def, account_base_impl_decl, account_decl
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_decl,
     )
 
     proxy = StarknetContract(
@@ -210,13 +236,11 @@ async def test_multicall_dapp_sanity(init_contracts):
         ],
     )
     assert response.call_info.retdata[1] == 18
-    assert (response.call_info.retdata[2], response.call_info.retdata[3]) == to_uint(
-        10000000000
-    )
+    assert (response.call_info.retdata[2],
+            response.call_info.retdata[3]) == to_uint(10000000000)
     assert response.call_info.retdata[4] == True
-    assert (response.call_info.retdata[5], response.call_info.retdata[6]) == to_uint(
-        100
-    )
+    assert (response.call_info.retdata[5],
+            response.call_info.retdata[6]) == to_uint(100)
 
 
 @pytest.mark.asyncio
@@ -227,35 +251,31 @@ async def test_external_entrypoint_guards(init_module_scoped_starknet_account):
         "felt*": 0,  # will always come after _len felt which we put 0 into
         **{
             abi_entry["name"]: abi_entry["size"]
-            for abi_entry in account.abi
-            if abi_entry["type"] == "struct"
+            for abi_entry in account.abi if abi_entry["type"] == "struct"
         },
     }
     for abi_entry in account.abi:
-        if (
-            abi_entry["name"] == "initializer"
-            or abi_entry["name"].startswith("__")
-            or abi_entry["type"] != "function"
-            or abi_entry.get("stateMutability") == "view"
-        ):
+        if (abi_entry["name"] == "initializer"
+                or abi_entry["name"].startswith("__")
+                or abi_entry["type"] != "function"
+                or abi_entry.get("stateMutability") == "view"):
             continue
         selector = get_selector_from_name(abi_entry["name"])
-        input_len = sum([param_lengths[x["type"]] for x in abi_entry["inputs"]])
+        input_len = sum(
+            [param_lengths[x["type"]] for x in abi_entry["inputs"]])
         await assert_revert(
             signer.send_transactions(
                 account,
-                [
-                    (
-                        malicious.contract_address,
-                        "call_other_contract",
-                        [
-                            account.contract_address,
-                            selector,
-                            input_len,
-                            *([0] * input_len),
-                        ],
-                    )
-                ],
+                [(
+                    malicious.contract_address,
+                    "call_other_contract",
+                    [
+                        account.contract_address,
+                        selector,
+                        input_len,
+                        *([0] * input_len),
+                    ],
+                )],
             ),
             "caller is not",
         )
@@ -278,7 +298,8 @@ async def test_multicall_non_existing_selector(init_contracts):
 
 
 @pytest.mark.asyncio
-async def test_multicall_malformed_calldata(init_module_scoped_starknet_account):
+async def test_multicall_malformed_calldata(
+        init_module_scoped_starknet_account):
     _, account, _, _, _, _ = init_module_scoped_starknet_account
 
     # callarray states 10 calldata entries for first call, but we have 5
@@ -299,16 +320,13 @@ async def test_multicall_malformed_calldata(init_module_scoped_starknet_account)
     flattened_calldata = flatten_seq(calldata)
 
     await assert_revert(
-        signer.send_raw_invoke(
-            account, get_selector_from_name("__execute__"), flattened_calldata
-        )
-    )
+        signer.send_raw_invoke(account, get_selector_from_name("__execute__"),
+                               flattened_calldata))
 
 
 @pytest.mark.asyncio
 async def test_multicall_allowed_call_to_self_combinations(
-    init_module_scoped_starknet_account,
-):
+    init_module_scoped_starknet_account, ):
     _, account, signer, _, _, _ = init_module_scoped_starknet_account
 
     # The following combinations are allowed so they are expected to fail
@@ -350,8 +368,10 @@ async def test_multicall_allowed_call_to_self_combinations(
         signer.send_transactions(
             account,
             [
-                (account.contract_address, "cancel_deferred_remove_signer_req", []),
-                (account.contract_address, "cancel_deferred_disable_multisig_req", []),
+                (account.contract_address, "cancel_deferred_remove_signer_req",
+                 []),
+                (account.contract_address,
+                 "cancel_deferred_disable_multisig_req", []),
             ],
         ),
         "While handling calldata",
@@ -362,7 +382,8 @@ async def test_multicall_allowed_call_to_self_combinations(
             account,
             [
                 (account.contract_address, "disable_multisig", []),
-                (account.contract_address, "cancel_deferred_remove_signer_req", []),
+                (account.contract_address, "cancel_deferred_remove_signer_req",
+                 []),
             ],
         ),
         "While handling calldata",
@@ -372,7 +393,8 @@ async def test_multicall_allowed_call_to_self_combinations(
         signer.send_transactions(
             account,
             [
-                (account.contract_address, "cancel_deferred_remove_signer_req", []),
+                (account.contract_address, "cancel_deferred_remove_signer_req",
+                 []),
                 (account.contract_address, "set_multisig", []),
             ],
         ),
@@ -394,7 +416,8 @@ async def test_multicall_allowed_call_to_self_combinations(
 
 
 @pytest.mark.asyncio
-async def test_is_valid_sig_sanity_stark_legacy(init_module_scoped_starknet_account):
+async def test_is_valid_sig_sanity_stark_legacy(
+        init_module_scoped_starknet_account):
     _, account, _, _, _, _ = init_module_scoped_starknet_account
 
     hash = pedersen_hash(0x11111, 0x22222)
@@ -403,7 +426,8 @@ async def test_is_valid_sig_sanity_stark_legacy(init_module_scoped_starknet_acco
 
 
 @pytest.mark.asyncio
-async def test_is_valid_sig_sanity_stark_indexed(init_module_scoped_starknet_account):
+async def test_is_valid_sig_sanity_stark_indexed(
+        init_module_scoped_starknet_account):
     _, account, _, signer_id, _, _ = init_module_scoped_starknet_account
 
     hash = pedersen_hash(0x11111, 0x22222)
@@ -413,8 +437,7 @@ async def test_is_valid_sig_sanity_stark_indexed(init_module_scoped_starknet_acc
 
 @pytest.mark.asyncio
 async def test_is_valid_sig_wrong_hash_stark_legacy(
-    init_module_scoped_starknet_account,
-):
+    init_module_scoped_starknet_account, ):
     _, account, _, _, _, _ = init_module_scoped_starknet_account
 
     hash = pedersen_hash(0x11111, 0x22222)
@@ -428,15 +451,15 @@ async def test_is_valid_sig_wrong_hash_stark_legacy(
 
 @pytest.mark.asyncio
 async def test_is_valid_sig_wrong_hash_stark_indexed(
-    init_module_scoped_starknet_account,
-):
+    init_module_scoped_starknet_account, ):
     _, account, _, signer_id, _, _ = init_module_scoped_starknet_account
 
     hash = pedersen_hash(0x11111, 0x22222)
     sig_r, sig_s = signer.signer.sign(hash)
     wrong_hash = hash + 1
     await assert_revert(
-        account.is_valid_signature(wrong_hash, [signer_id, sig_r, sig_s]).call(),
+        account.is_valid_signature(wrong_hash,
+                                   [signer_id, sig_r, sig_s]).call(),
         "is invalid, with respect to the public key",
     )
 
@@ -447,21 +470,19 @@ async def test_is_valid_sig_sanity_secp256r1_indexed(init_contracts):
 
     response = await signer.send_transactions(
         account1,
-        [
-            (
-                account1.contract_address,
-                "add_signer",
-                [
-                    293046774415151450209893312592299398545,
-                    30422779786664925426668165762677272064,
-                    304047604613500862221062801855681891347,
-                    330241335170734304790414819756797874939,
-                    2,  # secp256r1
-                    0,
-                    0,
-                ],
-            )
-        ],
+        [(
+            account1.contract_address,
+            "add_signer",
+            [
+                293046774415151450209893312592299398545,
+                30422779786664925426668165762677272064,
+                304047604613500862221062801855681891347,
+                330241335170734304790414819756797874939,
+                2,  # secp256r1
+                0,
+                0,
+            ],
+        )],
     )
 
     signer_id = response.call_info.retdata[1]
@@ -487,22 +508,20 @@ async def test_invalid_secp256r1_sig(init_module_scoped_secp256r1_accounts):
 
     invalid_rs = [0, 0, 0, 0]
     await assert_revert(
-        account.is_valid_signature(hash, [signer_id, *invalid_rs]).call(),
-    )
+        account.is_valid_signature(hash, [signer_id, *invalid_rs]).call(), )
 
     invalid_rs = [2**139, 0, 0, 0]
     await assert_revert(
-        account.is_valid_signature(hash, [signer_id, *invalid_rs]).call(),
-    )
+        account.is_valid_signature(hash, [signer_id, *invalid_rs]).call(), )
 
     invalid_rs = [0, 0, 2**139, 0]
     await assert_revert(
-        account.is_valid_signature(hash, [signer_id, *invalid_rs]).call(),
-    )
+        account.is_valid_signature(hash, [signer_id, *invalid_rs]).call(), )
 
 
 @pytest.mark.asyncio
-async def test_allow_multicall_single_call_to_self(init_module_scoped_starknet_account):
+async def test_allow_multicall_single_call_to_self(
+        init_module_scoped_starknet_account):
     _, account, signer, _, _, _ = init_module_scoped_starknet_account
 
     # send_transactions uses multi-call
@@ -518,8 +537,7 @@ async def test_allow_multicall_single_call_to_self(init_module_scoped_starknet_a
 
 @pytest.mark.asyncio
 async def test_fail_on_multicall_subsequent_call_to_self(
-    init_module_scoped_starknet_account,
-):
+    init_module_scoped_starknet_account, ):
     _, account, signer, _, _, _ = init_module_scoped_starknet_account
 
     # send_transactions uses multi-call
@@ -568,15 +586,14 @@ async def test_block_reentrant_call(init_module_scoped_starknet_account):
 
 @pytest.mark.asyncio
 async def test_add_secp256r1_signer_from_seed_and_remove_it_from_secp256r1_signer(
-    init_contracts,
-):
+    init_contracts, ):
     _, _, account1, _, _ = init_contracts
 
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "get_signers", [])]
-    )
+        account1, [(account1.contract_address, "get_signers", [])])
     signer_type_id = 2
-    all_signers_before = parse_get_signers_response(response.call_info.retdata[1:])
+    all_signers_before = parse_get_signers_response(
+        response.call_info.retdata[1:])
     expected_next_id = max([x[0] for x in all_signers_before]) + 1
     ecc_signer = TestECCSigner()
     signer_payload = [
@@ -587,8 +604,7 @@ async def test_add_secp256r1_signer_from_seed_and_remove_it_from_secp256r1_signe
         0,
     ]
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "add_signer", signer_payload)]
-    )
+        account1, [(account1.contract_address, "add_signer", signer_payload)])
 
     signer_id = response.call_info.retdata[1]
     assert signer_id == expected_next_id
@@ -605,21 +621,19 @@ async def test_add_secp256r1_signer_from_seed_and_remove_it_from_secp256r1_signe
         ecc_signer.send_transactions(
             account1,
             signer_id,
-            [
-                (
-                    account1.contract_address,
-                    "add_signer",
-                    [0, 0, 0, 0, signer_type_id, 0, 0],
-                )
-            ],
+            [(
+                account1.contract_address,
+                "add_signer",
+                [0, 0, 0, 0, signer_type_id, 0, 0],
+            )],
         ),
         "can only add 1 secp256r1 signer",
     )
 
     # Now remove "ourselves" using hw signer
     response = await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "remove_signer", [signer_id])]
-    )
+        account1, signer_id,
+        [(account1.contract_address, "remove_signer", [signer_id])])
     assert_event_emitted(
         response,
         from_address=account1.contract_address,
@@ -630,10 +644,10 @@ async def test_add_secp256r1_signer_from_seed_and_remove_it_from_secp256r1_signe
     # Finally use seed signer to make sure we indeed removed ourselves
     # (side effect also tested: seed signer can invoke anything)
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "get_signers", [])]
-    )
+        account1, [(account1.contract_address, "get_signers", [])])
 
-    all_signers_after = parse_get_signers_response(response.call_info.retdata[1:])
+    all_signers_after = parse_get_signers_response(
+        response.call_info.retdata[1:])
 
     assert all_signers_before == all_signers_after
 
@@ -658,8 +672,7 @@ async def test_failure_on_adding_invalid_secp256r1_signer(init_contracts):
     _, _, account1, _, _ = init_contracts
     signer_type_id = 2
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "get_signers", [])]
-    )
+        account1, [(account1.contract_address, "get_signers", [])])
     all_signers = parse_get_signers_response(response.call_info.retdata[1:])
     # Verify we have an hw signer
     hw_signers = [x for x in all_signers if x[5] == 2]
@@ -674,13 +687,11 @@ async def test_failure_on_adding_invalid_secp256r1_signer(init_contracts):
     await assert_revert(
         signer.send_transactions(
             account1,
-            [
-                (
-                    account1.contract_address,
-                    "add_signer",
-                    [*not_on_curve, signer_type_id, 0, 0],
-                )
-            ],
+            [(
+                account1.contract_address,
+                "add_signer",
+                [*not_on_curve, signer_type_id, 0, 0],
+            )],
         ),
         "invalid secp256r1 signer",
     )
@@ -689,13 +700,11 @@ async def test_failure_on_adding_invalid_secp256r1_signer(init_contracts):
     await assert_revert(
         signer.send_transactions(
             account1,
-            [
-                (
-                    account1.contract_address,
-                    "add_signer",
-                    [*just_zeros, signer_type_id, 0, 0],
-                )
-            ],
+            [(
+                account1.contract_address,
+                "add_signer",
+                [*just_zeros, signer_type_id, 0, 0],
+            )],
         ),
         "invalid secp256r1 signer",
     )
@@ -705,13 +714,11 @@ async def test_failure_on_adding_invalid_secp256r1_signer(init_contracts):
     await assert_revert(
         signer.send_transactions(
             account1,
-            [
-                (
-                    account1.contract_address,
-                    "add_signer",
-                    [*invalid_uint256_x, signer_type_id, 0, 0],
-                )
-            ],
+            [(
+                account1.contract_address,
+                "add_signer",
+                [*invalid_uint256_x, signer_type_id, 0, 0],
+            )],
         ),
         "invalid secp256r1 signer",
     )
@@ -720,13 +727,11 @@ async def test_failure_on_adding_invalid_secp256r1_signer(init_contracts):
     await assert_revert(
         signer.send_transactions(
             account1,
-            [
-                (
-                    account1.contract_address,
-                    "add_signer",
-                    [*invalid_uint256_y, signer_type_id, 0, 0],
-                )
-            ],
+            [(
+                account1.contract_address,
+                "add_signer",
+                [*invalid_uint256_y, signer_type_id, 0, 0],
+            )],
         ),
         "invalid secp256r1 signer",
     )
@@ -737,8 +742,7 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts):
     starknet, _, account1, _, _ = init_contracts
     signer_type_id = 2
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "get_signers", [])]
-    )
+        account1, [(account1.contract_address, "get_signers", [])])
     all_signers = parse_get_signers_response(response.call_info.retdata[1:])
     # Verify we have an hw signer
     hw_signers = [x for x in all_signers if x[5] == 2]
@@ -747,19 +751,17 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts):
     ecc_signer = TestECCSigner()
     response = await signer.send_transactions(
         account1,
-        [
-            (
-                account1.contract_address,
-                "add_signer",
-                [
-                    *ecc_signer.pk_x_uint256,
-                    *ecc_signer.pk_y_uint256,
-                    signer_type_id,  # secp256r1
-                    0,
-                    0,
-                ],
-            )
-        ],
+        [(
+            account1.contract_address,
+            "add_signer",
+            [
+                *ecc_signer.pk_x_uint256,
+                *ecc_signer.pk_y_uint256,
+                signer_type_id,  # secp256r1
+                0,
+                0,
+            ],
+        )],
     )
     signer_id = response.call_info.retdata[1]
 
@@ -776,15 +778,14 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts):
 
     # But we can use hw signer
     response = await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "getPublicKey", [])]
-    )
+        account1, signer_id, [(account1.contract_address, "getPublicKey", [])])
     assert response.call_info.retdata[1] == signer.public_key
 
     # make sure we can't create a remove etd on an invalid signer
     await assert_revert(
         signer.send_transactions(
-            account1, [(account1.contract_address, "remove_signer_with_etd", [99999])]
-        ),
+            account1,
+            [(account1.contract_address, "remove_signer_with_etd", [99999])]),
         "tried removing invalid signer",
     )
 
@@ -815,7 +816,8 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts):
         signer.send_transactions(
             account1,
             [
-                (account1.contract_address, "remove_signer_with_etd", [signer_id]),
+                (account1.contract_address, "remove_signer_with_etd",
+                 [signer_id]),
             ],
         ),
         "already have a pending remove signer request",
@@ -827,15 +829,14 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts):
 
     # Now set block timestamp so remove request etd will pass
     starknet.state.state.block_info = BlockInfo.create_for_testing(
-        2, exec_info.result.deferred_request.expire_at + 1
-    )
+        2, exec_info.result.deferred_request.expire_at + 1)
 
     # 1. hw signer should expire and fail to sign anything - as if it was already removed
     await assert_revert(
         ecc_signer.send_transactions(
-            account1, signer_id, [(account1.contract_address, "getPublicKey", [])]
-        ),
-        "unsupported signer type",
+            account1, signer_id,
+            [(account1.contract_address, "getPublicKey", [])]),
+        "expected secp256r1 signer",
     )
 
     # verify that getter takes expired etd into consideration
@@ -844,7 +845,6 @@ async def test_secp256r1_signer_removal_from_seed(init_contracts):
     # Verify we have an hw signer
     hw_signers = [x for x in all_signers if x[5] == 2]
     assert len(hw_signers) == 0
-
 
     # 2. seed signer should work fine and pending removal should be triggered
     # 2.1. use seed signer to "get_signers" via __execute__
@@ -877,8 +877,7 @@ async def test_swap_signers(init_contracts):
     signer_type_id = 2
 
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "get_signers", [])]
-    )
+        account1, [(account1.contract_address, "get_signers", [])])
     all_signers = parse_get_signers_response(response.call_info.retdata[1:])
     # Verify we have an hw signer
     hw_signers = [x for x in all_signers if x[5] == 2]
@@ -892,8 +891,7 @@ async def test_swap_signers(init_contracts):
         0,
     ]
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "add_signer", signer_payload)]
-    )
+        account1, [(account1.contract_address, "add_signer", signer_payload)])
     signer_id = response.call_info.retdata[1]
     assert_event_emitted(
         response,
@@ -911,9 +909,8 @@ async def test_swap_signers(init_contracts):
         0,
     ]
 
-    swap_call = [
-        (account1.contract_address, "swap_signers", [signer_id, *new_signer_payload])
-    ]
+    swap_call = [(account1.contract_address, "swap_signers",
+                  [signer_id, *new_signer_payload])]
 
     # Verify seed cant swap signers
     await assert_revert(
@@ -926,13 +923,18 @@ async def test_swap_signers(init_contracts):
         ecc_signer.send_transactions(
             account1,
             signer_id,
-            [(account1.contract_address, "swap_signers", [0, 0, 0, 0, 0, 1, 0, 0])],
+            [(account1.contract_address, "swap_signers",
+              [0, 0, 0, 0, 0, 1, 0, 0])],
         ),
         "cannot remove signer 0",
     )
 
     # Now remove old hw signer and add new hw signer in a single swap signers call
-    response = await ecc_signer.send_transactions(account1, signer_id, swap_call)
+    response = await ecc_signer.send_transactions(
+        account1,
+        signer_id,
+        swap_call,
+    )
     new_signer_id = response.call_info.retdata[1]
 
     assert_event_emitted(
@@ -989,8 +991,7 @@ async def test_cancel_signer_remove_request(init_contracts):
     signer_type_id = 2
 
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "get_signers", [])]
-    )
+        account1, [(account1.contract_address, "get_signers", [])])
     all_signers = parse_get_signers_response(response.call_info.retdata[1:])
     # Verify we have an hw signer
     hw_signers = [x for x in all_signers if x[5] == 2]
@@ -998,19 +999,17 @@ async def test_cancel_signer_remove_request(init_contracts):
     ecc_signer = TestECCSigner()
     response = await signer.send_transactions(
         account1,
-        [
-            (
-                account1.contract_address,
-                "add_signer",
-                [
-                    *ecc_signer.pk_x_uint256,
-                    *ecc_signer.pk_y_uint256,
-                    signer_type_id,  # secp256r1
-                    0,
-                    0,
-                ],
-            )
-        ],
+        [(
+            account1.contract_address,
+            "add_signer",
+            [
+                *ecc_signer.pk_x_uint256,
+                *ecc_signer.pk_y_uint256,
+                signer_type_id,  # secp256r1
+                0,
+                0,
+            ],
+        )],
     )
     signer_id = response.call_info.retdata[1]
 
@@ -1079,16 +1078,21 @@ async def test_initializer_no_secp256r1_signer(contract_defs):
     proxy_def, account_def, _, account_base_impl_def = contract_defs
     starknet = await Starknet.empty()
 
+    proxy_decl = await starknet.deprecated_declare(contract_class=proxy_def)
+
     account_base_impl_decl = await starknet.deprecated_declare(
-        contract_class=account_base_impl_def,
-    )
+        contract_class=account_base_impl_def, )
 
     account_actual_impl = await starknet.deprecated_declare(
-        contract_class=account_def,
-    )
+        contract_class=account_def, )
 
     account, call_info = await deploy_account_txn(
-        starknet, signer, proxy_def, account_base_impl_decl, account_actual_impl
+        starknet,
+        signer,
+        proxy_def,
+        proxy_decl,
+        account_base_impl_decl,
+        account_actual_impl,
     )
 
     as_proxy_abi = StarknetContract(
@@ -1102,8 +1106,7 @@ async def test_initializer_no_secp256r1_signer(contract_defs):
     assert execution_info.result.implementation == account_actual_impl.class_hash
 
     response = await signer.send_transactions(
-        account, [(account.contract_address, "get_signers", [])]
-    )
+        account, [(account.contract_address, "get_signers", [])])
     all_signers = parse_get_signers_response(response.call_info.retdata[1:])
     # Verify we have an hw signer
     hw_signers = [x for x in all_signers if x[5] == 2]
@@ -1116,13 +1119,12 @@ async def test_initializer_with_secp256r1_signer(contract_defs):
     signer_type_id = 2
     starknet = await Starknet.empty()
 
+    proxy_decl = await starknet.deprecated_declare(contract_class=proxy_def)
     account_base_impl_decl = await starknet.deprecated_declare(
-        contract_class=account_base_impl_def,
-    )
+        contract_class=account_base_impl_def, )
 
     account_actual_impl = await starknet.deprecated_declare(
-        contract_class=account_def,
-    )
+        contract_class=account_def, )
 
     ecc_signer = TestECCSigner()
     signer_payload = [
@@ -1137,6 +1139,7 @@ async def test_initializer_with_secp256r1_signer(contract_defs):
         starknet,
         signer,
         proxy_def,
+        proxy_decl,
         account_base_impl_decl,
         account_actual_impl,
         hw_signer=signer_payload,
@@ -1153,8 +1156,7 @@ async def test_initializer_with_secp256r1_signer(contract_defs):
     assert execution_info.result.implementation == account_actual_impl.class_hash
 
     response = await ecc_signer.send_transactions(
-        account, 1, [(account.contract_address, "get_signers", [])]
-    )
+        account, 1, [(account.contract_address, "get_signers", [])])
     all_signers = parse_get_signers_response(response.call_info.retdata[1:])
     # Verify we have a secp256r1 signer
     hw_signers = [x for x in all_signers if x[5] == signer_type_id]
@@ -1167,14 +1169,15 @@ async def test_initializer_fail_on_no_actual_impl(contract_defs):
     starknet = await Starknet.empty()
 
     account_base_impl_decl = await starknet.deprecated_declare(
-        contract_class=account_base_impl_def,
-    )
+        contract_class=account_base_impl_def, )
+    proxy_decl = await starknet.deprecated_declare(contract_class=proxy_def)
 
     await assert_revert(
         deploy_account_txn(
             starknet,
             signer,
             proxy_def,
+            proxy_decl,
             account_base_impl_decl,
             account_actual_impl=None,
             hw_signer=None,
@@ -1189,15 +1192,13 @@ async def test_set_multisig_basic_assertions(init_contracts):
 
     await assert_revert(
         signer.send_transactions(
-            account1, [(account1.contract_address, "set_multisig", [3])]
-        ),
+            account1, [(account1.contract_address, "set_multisig", [3])]),
         "multisig currently supports 2 signers only",
     )
 
     await assert_revert(
         signer.send_transactions(
-            account1, [(account1.contract_address, "set_multisig", [2])]
-        ),
+            account1, [(account1.contract_address, "set_multisig", [2])]),
         "multisig can only be set if account have additional signers",
     )
 
@@ -1225,9 +1226,10 @@ async def test_set_multisig_add_signer_multicall(init_contracts):
         ],
     )
 
-    assert_event_emitted(
-        response, from_address=account1.contract_address, keys="MultisigSet", data=[2]
-    )
+    assert_event_emitted(response,
+                         from_address=account1.contract_address,
+                         keys="MultisigSet",
+                         data=[2])
 
     execution_info = await account1.get_multisig().call()
     assert execution_info.result.multisig_num_signers == 2
@@ -1241,38 +1243,36 @@ async def test_set_multisig_existing_hws_signer(init_contracts):
 
     response = await signer.send_transactions(
         account1,
-        [
-            (
-                account1.contract_address,
-                "add_signer",
-                [
-                    *ecc_signer.pk_x_uint256,
-                    *ecc_signer.pk_y_uint256,
-                    2,  # secp256r1
-                    0,
-                    0,
-                ],
-            )
-        ],
+        [(
+            account1.contract_address,
+            "add_signer",
+            [
+                *ecc_signer.pk_x_uint256,
+                *ecc_signer.pk_y_uint256,
+                2,  # secp256r1
+                0,
+                0,
+            ],
+        )],
     )
     signer_id = response.call_info.retdata[1]
 
     # seed should not be able to enable multisig
     await assert_revert(
         signer.send_transactions(
-            account1, [(account1.contract_address, "set_multisig", [2])]
-        ),
+            account1, [(account1.contract_address, "set_multisig", [2])]),
         "invalid entry point for seed signing",
     )
 
     # enable multisig from hws
     response = await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "set_multisig", [2])]
-    )
+        account1, signer_id,
+        [(account1.contract_address, "set_multisig", [2])])
 
-    assert_event_emitted(
-        response, from_address=account1.contract_address, keys="MultisigSet", data=[2]
-    )
+    assert_event_emitted(response,
+                         from_address=account1.contract_address,
+                         keys="MultisigSet",
+                         data=[2])
 
     execution_info = await account1.get_multisig().call()
     assert execution_info.result.multisig_num_signers == 2
@@ -1323,19 +1323,15 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
 
     # Fail on no pending txn
     await assert_revert(
-        send_transactions_1st(
-            *[
-                account1,
-                *signer_id_param_1st,
-                [
-                    (
-                        account1.contract_address,
-                        "sign_pending_multisig_transaction",
-                        [0, 0, 0, 0],
-                    )
-                ],
-            ]
-        ),
+        send_transactions_1st(*[
+            account1,
+            *signer_id_param_1st,
+            [(
+                account1.contract_address,
+                "sign_pending_multisig_transaction",
+                [0, 0, 0, 0],
+            )],
+        ]),
         "no pending transaction to sign",
     )
 
@@ -1367,67 +1363,59 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
     )
 
     # Send first signer
-    response = await send_transactions_1st(
-        *[
-            account1,
-            *signer_id_param_1st,
-            [(account1.contract_address, "getPublicKey", [])],
-        ]
-    )
+    response = await send_transactions_1st(*[
+        account1,
+        *signer_id_param_1st,
+        [(account1.contract_address, "getPublicKey", [])],
+    ])
 
     assert response.call_info.retdata[0] == 0
 
     execution_info = await account1.get_pending_multisig_transaction().call()
-    assert (
-        execution_info.result.pending_multisig_transaction.signer_1_id
-        == first_signer_id
-    )
+    assert (execution_info.result.pending_multisig_transaction.signer_1_id ==
+            first_signer_id, )
     pending_hash = execution_info.result.pending_multisig_transaction.transaction_hash
     expire_at_sec = execution_info.result.pending_multisig_transaction.expire_at_sec
     expire_at_block_num = (
-        execution_info.result.pending_multisig_transaction.expire_at_block_num
-    )
+        execution_info.result.pending_multisig_transaction.expire_at_block_num)
 
     assert_event_emitted(
         response,
         from_address=account1.contract_address,
-        keys=[get_selector_from_name("MultisigPendingTransaction"), first_signer_id],
+        keys=[
+            get_selector_from_name("MultisigPendingTransaction"),
+            first_signer_id
+        ],
         data=[pending_hash, expire_at_sec, expire_at_block_num],
     )
 
     # Fail on same signer
     await assert_revert(
-        send_transactions_1st(
-            *[
-                account1,
-                *signer_id_param_1st,
-                [
-                    (
-                        account1.contract_address,
-                        "sign_pending_multisig_transaction",
-                        [0, 0, 0, 0],
-                    )
-                ],
-            ]
-        ),
+        send_transactions_1st(*[
+            account1,
+            *signer_id_param_1st,
+            [(
+                account1.contract_address,
+                "sign_pending_multisig_transaction",
+                [0, 0, 0, 0],
+            )],
+        ]),
         "multisig signer can only sign once",
     )
 
     # Now send with 2nd signer, fail on invalid hash
     await assert_revert(
-        send_transactions_2nd(
-            *[
-                account1,
-                *signer_id_param_2nd,
-                [
-                    (
-                        account1.contract_address,
-                        "sign_pending_multisig_transaction",
-                        [0, 0, 0, 0],
-                    ),
-                ],
-            ]
-        ),
+        send_transactions_2nd(*[
+            account1,
+            *signer_id_param_2nd,
+            [
+                (
+                    account1.contract_address,
+                    "sign_pending_multisig_transaction",
+                    [0, 0, 0, 0],
+                ),
+            ],
+        ]),
         "multisig invalid hash",
     )
 
@@ -1458,33 +1446,30 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
         "Requested contract address 0x1 is not deployed",
     )
 
-    second_signer_calls = [
-        (
+    second_signer_calls = [(
+        account1.contract_address,
+        "sign_pending_multisig_transaction",
+        [
+            # raw calldata_len:
+            6,
+            # raw calldata for execute (callarray len, call array, calldata len, calldata) on getPublicKey
+            1,
             account1.contract_address,
-            "sign_pending_multisig_transaction",
-            [
-                # raw calldata_len:
-                6,
-                # raw calldata for execute (callarray len, call array, calldata len, calldata) on getPublicKey
-                1,
-                account1.contract_address,
-                get_selector_from_name("getPublicKey"),
-                0,
-                0,
-                0,
-                # pending nonce
-                2,
-                # pending max fee
-                0,
-                # txn ver
-                1,
-            ],
-        )
-    ]
+            get_selector_from_name("getPublicKey"),
+            0,
+            0,
+            0,
+            # pending nonce
+            2,
+            # pending max fee
+            0,
+            # txn ver
+            1,
+        ],
+    )]
 
     response = await send_transactions_2nd(
-        *[account1, *signer_id_param_2nd, second_signer_calls]
-    )
+        *[account1, *signer_id_param_2nd, second_signer_calls])
 
     # we index 2 below because we get raw __execute__ output wrapped in sign_pending_multisig_transaction output
     # i.e. (response_len=<sign_pending_multisig_transaction len>, response=(respones_len=<execute len>, response=<execute resp>))
@@ -1493,7 +1478,10 @@ async def test_multisig_with_multi_signers(init_contracts, first_signer_type):
     assert_event_emitted(
         response,
         from_address=account1.contract_address,
-        keys=[get_selector_from_name("MultisigPendingTransactionSigned"), pending_hash],
+        keys=[
+            get_selector_from_name("MultisigPendingTransactionSigned"),
+            pending_hash
+        ],
         data=[second_signer_id],
     )
 
@@ -1529,27 +1517,19 @@ async def test_multisig_2_signers_in_single_sig(init_contracts):
 
     # Prepare execute calldata for both signers to sign
     calldata = [
-        1,
-        erc20.contract_address,
-        get_selector_from_name("balanceOf"),
-        0,
-        1,
-        1,
-        account1.contract_address
+        1, erc20.contract_address,
+        get_selector_from_name("balanceOf"), 0, 1, 1, account1.contract_address
     ]
 
-    signer_obj = namedtuple('SignerTuple', ['sign'])(lambda hash: [
-        0,
-        *signer.signer.sign(hash),
-        signer_id,
-        *ecc_signer.sign(hash)
-    ])
-    await send_raw_invoke(
-        account1,
-        get_selector_from_name("__execute__"),
-        calldata,
-        signer=signer_obj
-    )
+    signer_obj = namedtuple(
+        'SignerTuple',
+        ['sign'
+         ])(lambda hash:
+            [0, *signer.signer.sign(hash), signer_id, *ecc_signer.sign(hash)])
+    await send_raw_invoke(account1,
+                          get_selector_from_name("__execute__"),
+                          calldata,
+                          signer=signer_obj)
 
 
 @pytest.mark.asyncio
@@ -1578,8 +1558,7 @@ async def test_multisig_override_pending_txn(init_contracts):
     signer_id = response.call_info.retdata[1]
     # secp256r1 signer initiates the multisig
     response = await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "getPublicKey", [])]
-    )
+        account1, signer_id, [(account1.contract_address, "getPublicKey", [])])
     assert response.call_info.retdata[0] == 0
     execution_info = await account1.get_pending_multisig_transaction().call()
     deferred_txn_1 = execution_info.result.pending_multisig_transaction
@@ -1587,8 +1566,7 @@ async def test_multisig_override_pending_txn(init_contracts):
     # seed signer overrides
     await assert_revert(
         signer.send_transactions(
-            account1, [(account1.contract_address, "getPublicKey", [])]
-        ),
+            account1, [(account1.contract_address, "getPublicKey", [])]),
         "seed signer cannot override pending transactions",
     )
 
@@ -1619,8 +1597,7 @@ async def test_multisig_discard_expired_pending_txn(init_contracts):
     signer_id = response.call_info.retdata[1]
     # 1st multisig txn - nonce == 2
     response = await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "getPublicKey", [])]
-    )
+        account1, signer_id, [(account1.contract_address, "getPublicKey", [])])
     assert response.call_info.retdata[0] == 0
 
     execution_info = await account1.get_pending_multisig_transaction().call()
@@ -1661,8 +1638,7 @@ async def test_multisig_discard_expired_pending_txn(init_contracts):
     starknet.state.state.block_info = BlockInfo.create_for_testing(0, 0)
     # 2nd multisig txn - nonce == 4
     response = await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "getPublicKey", [])]
-    )
+        account1, signer_id, [(account1.contract_address, "getPublicKey", [])])
     assert response.call_info.retdata[0] == 0
     starknet.state.state.block_info = BlockInfo.create_for_testing(0, 250)
     response = await signer.send_transactions(
@@ -1697,8 +1673,7 @@ async def test_multisig_discard_expired_pending_txn(init_contracts):
     starknet.state.state.block_info = BlockInfo.create_for_testing(0, 0)
     # 2nd multisig txn - nonce == 6
     response = await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "getPublicKey", [])]
-    )
+        account1, signer_id, [(account1.contract_address, "getPublicKey", [])])
     starknet.state.state.block_info = BlockInfo.create_for_testing(5, 301)
     await assert_revert(
         signer.send_transactions(
@@ -1761,19 +1736,18 @@ async def test_multisig_disable(init_contracts, disable_multisig_initiator):
     # seed is not allowed to override
     if disable_multisig_initiator == "secp256r1":
         response = await ecc_signer.send_transactions(
-         account1, signer_id, [(account1.contract_address, "getPublicKey", [])]
-         )
+            account1, signer_id,
+            [(account1.contract_address, "getPublicKey", [])])
         assert response.call_info.retdata[0] == 0
 
     if disable_multisig_initiator == "secp256r1":
         # Override pending with disable multisig (nonce == 3)
         response = await ecc_signer.send_transactions(
-            account1, signer_id, [(account1.contract_address, "disable_multisig", [])]
-        )
+            account1, signer_id,
+            [(account1.contract_address, "disable_multisig", [])])
     else:
         response = await signer.send_transactions(
-            account1, [(account1.contract_address, "disable_multisig", [])]
-        )
+            account1, [(account1.contract_address, "disable_multisig", [])])
     assert response.call_info.retdata[0] == 0
 
     # Seed should not be able to do anything besides signing the pending txn or sending etd txns
@@ -1798,35 +1772,38 @@ async def test_multisig_disable(init_contracts, disable_multisig_initiator):
         )
 
     # execute it
-    sign_pending_call_array = [
-        (
+    sign_pending_call_array = [(
+        account1.contract_address,
+        "sign_pending_multisig_transaction",
+        [
+            # raw calldata_len:
+            6,
+            # raw calldata for execute (callarray len, call array, calldata len, calldata)
+            1,
             account1.contract_address,
-            "sign_pending_multisig_transaction",
-            [
-                # raw calldata_len:
-                6,
-                # raw calldata for execute (callarray len, call array, calldata len, calldata)
-                1,
-                account1.contract_address,
-                get_selector_from_name("disable_multisig"),
-                0,
-                0,
-                0,
-                # pending nonce
-                3 if disable_multisig_initiator == "secp256r1" else 2,
-                # pending max fee
-                0,
-                # txn ver
-                1,
-            ],
-        )
-    ]
+            get_selector_from_name("disable_multisig"),
+            0,
+            0,
+            0,
+            # pending nonce
+            3 if disable_multisig_initiator == "secp256r1" else 2,
+            # pending max fee
+            0,
+            # txn ver
+            1,
+        ],
+    )]
 
     if disable_multisig_initiator == "secp256r1":
-        response = await signer.send_transactions(account1, sign_pending_call_array)
+        response = await signer.send_transactions(
+            account1,
+            sign_pending_call_array,
+        )
     else:
         response = await ecc_signer.send_transactions(
-            account1, signer_id, sign_pending_call_array
+            account1,
+            signer_id,
+            sign_pending_call_array,
         )
 
     # Make sure multi sig remove event fired
@@ -1878,8 +1855,7 @@ async def test_multisig_remove_signer_should_disable_multisig(init_contracts):
     # initiate remove hws signer from seed
     # note this is not possible without multisig - so we also test that
     _ = await signer.send_transactions(
-        account1, [(account1.contract_address, "remove_signer", [signer_id])]
-    )
+        account1, [(account1.contract_address, "remove_signer", [signer_id])])
     response = await ecc_signer.send_transactions(
         account1,
         signer_id,
@@ -1922,6 +1898,54 @@ async def test_multisig_remove_signer_should_disable_multisig(init_contracts):
     # Make sure no pending multisig txns
     execution_info = await account1.get_pending_multisig_transaction().call()
     assert execution_info.result.pending_multisig_transaction.transaction_hash == 0
+
+
+@pytest.mark.asyncio
+async def test_multisig_disable_with_etd_block_unauthorized_multicall(
+        init_contracts):
+    # Although this is covered by allowed multicall combinations, check this explicitly as well
+    starknet, _, account1, _, _ = init_contracts
+
+    ecc_signer = TestECCSigner()
+
+    response = await signer.send_transactions(
+        account1,
+        [
+            (
+                account1.contract_address,
+                "add_signer",
+                [
+                    *ecc_signer.pk_x_uint256,
+                    *ecc_signer.pk_y_uint256,
+                    2,  # secp256r1
+                    0,
+                    0,
+                ],
+            ),
+            (account1.contract_address, "set_multisig", [2]),
+        ],
+    )
+    signer_id = response.call_info.retdata[1]
+
+    # disable with etd is not possible with non-seed signer
+    await assert_revert(
+        ecc_signer.send_transactions(
+            account1,
+            signer_id,
+            [
+                (account1.contract_address, "disable_multisig_with_etd", []),
+            ],
+        ),
+        "should be called with seed signer",
+    )
+
+    await assert_revert(
+        signer.send_transactions(account1, [
+            (account1.contract_address, "disable_multisig_with_etd", []),
+            (account1.contract_address, "remove_signer", [1]),
+        ]),
+        "multicall with subsequent call to self",
+    )
 
 
 @pytest.mark.asyncio
@@ -1999,8 +2023,7 @@ async def test_multisig_disable_with_etd(init_contracts):
     )
 
     starknet.state.state.block_info = BlockInfo.create_for_testing(
-        0, deferred_request.expire_at + 1
-    )
+        0, deferred_request.expire_at + 1)
 
     # Check the getter also considers expired etd
     exec_info = await account1.get_multisig().call()
@@ -2008,8 +2031,7 @@ async def test_multisig_disable_with_etd(init_contracts):
 
     # Deferred expired so we expect multisig to be removed, i.e. txn will execute as usual
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "getPublicKey", [])]
-    )
+        account1, [(account1.contract_address, "getPublicKey", [])])
     assert_event_emitted_in_call_info(
         response.validate_info.internal_calls[0],
         from_address=account1.contract_address,
@@ -2061,14 +2083,12 @@ async def test_multisig_disable_after_remove_signer_etd_expire(init_contracts):
     assert deferred_request.expire_at != 0
 
     starknet.state.state.block_info = BlockInfo.create_for_testing(
-        0, deferred_request.expire_at + 1
-    )
+        0, deferred_request.expire_at + 1)
 
     # Deferred remove signer expired so we expect multisig to be removed,
     # i.e. txn will execute as usual
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "getPublicKey", [])]
-    )
+        account1, [(account1.contract_address, "getPublicKey", [])])
     assert_event_emitted_in_call_info(
         response.validate_info.internal_calls[0],
         from_address=account1.contract_address,
@@ -2238,7 +2258,8 @@ async def test_multisig_cancel_disable_with_etd(init_contracts):
                 "cancel_deferred_remove_signer_req",
                 [signer_id],
             ),
-            (account1.contract_address, "cancel_deferred_disable_multisig_req", []),
+            (account1.contract_address, "cancel_deferred_disable_multisig_req",
+             []),
         ],
     )
     assert response.call_info.retdata[0] == 0
@@ -2257,11 +2278,13 @@ async def test_multisig_cancel_disable_with_etd(init_contracts):
                     # raw calldata for execute (callarray len, call array, calldata len, calldata)
                     2,
                     account1.contract_address,
-                    get_selector_from_name("cancel_deferred_remove_signer_req"),
+                    get_selector_from_name(
+                        "cancel_deferred_remove_signer_req"),
                     0,
                     1,
                     account1.contract_address,
-                    get_selector_from_name("cancel_deferred_disable_multisig_req"),
+                    get_selector_from_name(
+                        "cancel_deferred_disable_multisig_req"),
                     1,
                     0,
                     1,
@@ -2296,7 +2319,10 @@ async def test_declare_validation(init_contracts, contract_defs):
         "version": 1,
         "signature": [],
     }
-    declare_tx = InternalDeclare.create_deprecated(**{**declare_tx_params, "nonce": 1})
+    declare_tx = InternalDeclare.create_deprecated(
+        **{
+            **declare_tx_params, "nonce": 1
+        })
     seed_sig = signer.signer.sign(declare_tx.hash_value)
     declare_tx.__dict__["signature"] = list(seed_sig)
     # Seed mode
@@ -2311,25 +2337,33 @@ async def test_declare_validation(init_contracts, contract_defs):
         0,
     ]
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "add_signer", signer_payload)]
-    )
+        account1, [(account1.contract_address, "add_signer", signer_payload)])
     signer_id = response.call_info.retdata[1]
 
     # HWS mode
-    declare_tx = InternalDeclare.create_deprecated(**{**declare_tx_params, "nonce": 3})
+    declare_tx = InternalDeclare.create_deprecated(
+        **{
+            **declare_tx_params, "nonce": 3
+        })
     hws_sig = ecc_signer.sign(declare_tx.hash_value)
     declare_tx.__dict__["signature"] = [signer_id, *hws_sig]
     await account1.state.execute_tx(tx=declare_tx)
 
     # Multisig mode
     await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "set_multisig", [2])]
-    )
-    declare_tx = InternalDeclare.create_deprecated(**{**declare_tx_params, "nonce": 5})
+        account1, signer_id,
+        [(account1.contract_address, "set_multisig", [2])])
+    declare_tx = InternalDeclare.create_deprecated(
+        **{
+            **declare_tx_params, "nonce": 5
+        })
     hws_sig = ecc_signer.sign(declare_tx.hash_value)
     seed_sig = signer.signer.sign(declare_tx.hash_value)
-    declare_tx.__dict__["signature"] = [0, *list(seed_sig), signer_id, *hws_sig]
+    declare_tx.__dict__["signature"] = [
+        0, *list(seed_sig), signer_id, *hws_sig
+    ]
     await account1.state.execute_tx(tx=declare_tx)
+
 
 @pytest.mark.asyncio
 async def test_is_valid_sig_for_mode(init_contracts):
@@ -2342,7 +2376,6 @@ async def test_is_valid_sig_for_mode(init_contracts):
     exec_info = await account1.isValidSignature(test_hash, seed_sig).call()
     assert exec_info.result.isValid == 1
 
-
     ecc_signer = TestECCSigner()
     signer_payload = [
         *ecc_signer.pk_x_uint256,
@@ -2352,8 +2385,7 @@ async def test_is_valid_sig_for_mode(init_contracts):
         0,
     ]
     response = await signer.send_transactions(
-        account1, [(account1.contract_address, "add_signer", signer_payload)]
-    )
+        account1, [(account1.contract_address, "add_signer", signer_payload)])
     signer_id = response.call_info.retdata[1]
 
     # HWS mode
@@ -2362,22 +2394,23 @@ async def test_is_valid_sig_for_mode(init_contracts):
     assert exec_info.result.isValid == 0
     # But succeed on HWS
     hws_sig = ecc_signer.sign(test_hash)
-    exec_info = await account1.isValidSignature(test_hash, [signer_id, *hws_sig]).call()
+    exec_info = await account1.isValidSignature(test_hash,
+                                                [signer_id, *hws_sig]).call()
     assert exec_info.result.isValid == 1
 
     # Multisig mode
     await ecc_signer.send_transactions(
-        account1, signer_id, [(account1.contract_address, "set_multisig", [2])]
-    )
+        account1, signer_id,
+        [(account1.contract_address, "set_multisig", [2])])
     # Fail on seed sig
     exec_info = await account1.isValidSignature(test_hash, seed_sig).call()
     assert exec_info.result.isValid == 0
     # Fail on HWS
     hws_sig = ecc_signer.sign(test_hash)
-    exec_info = await account1.isValidSignature(test_hash, [signer_id, *hws_sig]).call()
+    exec_info = await account1.isValidSignature(test_hash,
+                                                [signer_id, *hws_sig]).call()
     assert exec_info.result.isValid == 0
     # But succeed on Multisig
-    exec_info = await account1.isValidSignature(test_hash, [
-        0, *seed_sig, signer_id, *hws_sig]
-    ).call()
+    exec_info = await account1.isValidSignature(
+        test_hash, [0, *seed_sig, signer_id, *hws_sig]).call()
     assert exec_info.result.isValid == 1

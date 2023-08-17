@@ -22,6 +22,10 @@ from starkware.starknet.common.syscalls import (
 from lib.secp256r1.src.secp256r1.ec import verify_point
 from lib.secp256r1.src.secp256r1.signature import verify_secp256r1_signature
 from src.utils.constants import (
+    NATIVE_STARK_SIG_LEN,
+    STARK_SIG_LEN,
+    SECP256R1_UINT256_SIG_LEN,
+    STARK_PLUS_SECP256R1_SIG_LEN,
     REMOVE_SIGNER_WITH_ETD_SELECTOR,
     SIGNER_TYPE_SECP256R1,
     SIGNER_TYPE_STARK,
@@ -217,6 +221,7 @@ namespace Signers {
         with_attr error_message(
             "Signers: swap only supported for secp256r1 signer") {
             assert added_signer.type = SIGNER_TYPE_SECP256R1;
+            assert removed_signer.type = SIGNER_TYPE_SECP256R1;
         }
 
         // At this point we verified
@@ -236,12 +241,12 @@ namespace Signers {
         pedersen_ptr: HashBuiltin*,
         range_check_ptr
     }(index: felt) -> () {
-        with_attr error_message("Signers: cannot remove signer 0") {
-            assert_not_equal(index, 0);
+        // Make sure we remove a hw signer, this also implies that there is one
+        let (removed_signer) = Account_signers.read(index);
+        with_attr error_message("Signers: tried removing invalid signer") {
+            assert removed_signer.type = SIGNER_TYPE_SECP256R1;
         }
 
-        // NOTE: We know that add_signer limits us to have only 1 additional secp256r1 signer
-        let (removed_signer) = Account_signers.read(index);
         Account_signers.write(
             index,
             SignerModel(
@@ -262,21 +267,11 @@ namespace Signers {
             )
         );
 
-        if (removed_signer.type == SIGNER_TYPE_SECP256R1) {
-            let (num_hw_signers) = Account_signers_num_hw_signers.read();
-            // enforce only 1 additional signer - when support more need to guarantee
-            // that non-hws cannot remove hws
-            assert num_hw_signers = 1;
-            Account_signers_num_hw_signers.write(num_hw_signers - 1);
-            tempvar syscall_ptr = syscall_ptr;
-            tempvar pedersen_ptr = pedersen_ptr;
-            tempvar range_check_ptr = range_check_ptr;
-        } else {
-            // FIXME: ASSERT (and maybe remove revokes handling)
-            tempvar syscall_ptr = syscall_ptr;
-            tempvar pedersen_ptr = pedersen_ptr;
-            tempvar range_check_ptr = range_check_ptr;
-        }
+        let (num_hw_signers) = Account_signers_num_hw_signers.read();
+        // enforce only 1 additional signer - when support more need to guarantee
+        // that non-hws cannot remove hws
+        assert num_hw_signers = 1;
+        Account_signers_num_hw_signers.write(num_hw_signers - 1);
 
         SignerRemoved.emit(index);
         return ();
@@ -287,10 +282,6 @@ namespace Signers {
         pedersen_ptr: HashBuiltin*,
         range_check_ptr
     }(index: felt, account_etd: felt) -> () {
-        with_attr error_message("Signers: cannot remove signer 0") {
-            assert_not_equal(index, 0);
-        }
-
         // Make sure we remove a hw signer, this also implies that there is one
         let (removed_signer) = Account_signers.read(index);
         with_attr error_message("Signers: tried removing invalid signer") {
@@ -346,52 +337,71 @@ namespace Signers {
         signature_len: felt,
         signature: felt*
     ) -> (signers_len: felt, signers: IndexedSignerModel*) {
+        alloc_locals;
         let res: IndexedSignerModel* = alloc();
+        // "native" stark signature
+        if (signature_len == NATIVE_STARK_SIG_LEN) {
+            let (seed_signer) = Account_signers.read(0);
+            let indexed_signer = IndexedSignerModel(
+                index=0,
+                signer=seed_signer,
+            );
+            assert res[0] = indexed_signer;
+            return (signers_len=1, signers=res);
+        }
 
-        if (signature_len == 8) {
-            // Currently only supports seed + secp256r1 combination
-            // (id_stark, r, s, id_secp256r1, r0, r1, s0, s1)
-            let (signer_1) = Account_signers.read(signature[0]);
-            with_attr error_message("Multisig: expected 1st signer to be stark signer") {
+        let (local signer_1: SignerModel) = Account_signers.read(signature[0]);
+        if (signature_len == STARK_SIG_LEN) {
+            with_attr error_message("Signers: expected stark signer") {
                 assert signer_1.type = SIGNER_TYPE_STARK;
             }
             assert res[0] = IndexedSignerModel(
                 index=signature[0],
                 signer=signer_1,
             );
-
-            // stark sig is 3 felts (id, r, s) so offset to next sig is 3
-            let signer_2_id = signature[3];
-            let (signer_2) = Account_signers.read(signer_2_id);
-            with_attr error_message("Multisig: expected 2nd signer to be secp256r1 signer") {
-                assert signer_2.type = SIGNER_TYPE_SECP256R1;
-            }
-            assert res[1] = IndexedSignerModel(
-                index=signer_2_id,
-                signer=signer_2,
-            );
-            return (signers_len=2, signers=res);
-        }
-
-        // Support also "native" stark signature
-        if (signature_len == 2) {
-            let (signer) = Account_signers.read(0);
-            let indexed_signer = IndexedSignerModel(
-                index=0,
-                signer=signer,
-            );
-            assert res[0] = indexed_signer;
             return (signers_len=1, signers=res);
         }
 
-        // else resolve single signer by id
-        let (signer) = Account_signers.read(signature[0]);
-        let indexed_signer = IndexedSignerModel(
-            index=signature[0],
-            signer=signer,
-        );
-        assert res[0] = indexed_signer;
-        return (signers_len=1, signers=res);
+        if (signature_len == SECP256R1_UINT256_SIG_LEN) {
+            with_attr error_message("Signers: expected secp256r1 signer") {
+                assert signer_1.type = SIGNER_TYPE_SECP256R1;
+            }
+            assert res[0] = IndexedSignerModel(
+                index=signature[0],
+                signer=signer_1,
+            );
+            return (signers_len=1, signers=res);
+
+        }
+
+        if (signature_len == STARK_PLUS_SECP256R1_SIG_LEN) {
+            if (signer_1.type == SIGNER_TYPE_STARK) {
+                // Currently only supports seed + secp256r1 combination
+                // (id_stark, r, s, id_secp256r1, r0, r1, s0, s1)
+                assert res[0] = IndexedSignerModel(
+                    index=signature[0],
+                    signer=signer_1,
+                );
+
+                // stark sig is 3 felts (id, r, s) so offset to next sig is 3
+                let signer_2_id = signature[3];
+                let (signer_2) = Account_signers.read(signer_2_id);
+                with_attr error_message("Signers: expected secp256r1 signer") {
+                    assert signer_2.type = SIGNER_TYPE_SECP256R1;
+                }
+                assert res[1] = IndexedSignerModel(
+                    index=signer_2_id,
+                    signer=signer_2,
+                );
+                return (signers_len=2, signers=res);
+            }
+        }
+
+
+        with_attr error_message("Signers: unexpected signature") {
+            assert 1=0;
+        }
+        return (signers_len=0, signers=cast(0, IndexedSignerModel*));
     }
 
     func apply_elapsed_etd_requests{
@@ -419,8 +429,9 @@ namespace Signers {
     }(
         call_array_len: felt, call_0_to: felt, call_0_sel: felt,
         calldata_len: felt, calldata: felt*,
-        tx_info: TxInfo*, block_timestamp: felt, block_num: felt,
-        in_multisig_mode: felt, is_estfee: felt,
+        tx_info: TxInfo*, block_timestamp: felt, block_num: felt, is_estfee: felt,
+        multi_signers_len: felt, multi_signers: IndexedSignerModel*,
+        in_multisig_mode: felt, num_secp256r1_signers: felt,
     ) -> (valid: felt) {
         // Authorize Signer
         _authorize_signer(
@@ -429,6 +440,8 @@ namespace Signers {
             call_array_len, call_0_to, call_0_sel,
             block_timestamp,
             in_multisig_mode,
+            multi_signers_len, multi_signers,
+            num_secp256r1_signers,
         );
 
         // For estimate fee txns we skip sig validation - client side should account for it
@@ -439,7 +452,8 @@ namespace Signers {
         // Validate signature
         with_attr error_message("Signers: invalid signature") {
             let (is_valid) = is_valid_signature(
-                tx_info.transaction_hash, tx_info.signature_len, tx_info.signature
+                tx_info.transaction_hash, tx_info.signature_len, tx_info.signature,
+                multi_signers_len, multi_signers,
             );
             assert is_valid = TRUE;
         }
@@ -457,17 +471,14 @@ namespace Signers {
         call_array_len: felt, call_0_to: felt, call_0_sel: felt,
         block_timestamp: felt,
         in_multisig_mode: felt,
+        multi_signers_len: felt, multi_signers: IndexedSignerModel*,
+        num_secp256r1_signers: felt,
     ) -> () {
         alloc_locals;
 
-        let (num_additional_signers) = Account_signers_num_hw_signers.read();
-        let (tx_info) = get_tx_info();
-        let (multi_signers_len, multi_signers) = resolve_signers_from_sig(
-            tx_info.signature_len, tx_info.signature);
-
         // Dont limit txns on: not(secp256r1) OR multisig
         // the if below is boolean equivalent via DeMorgan identity
-        if (num_additional_signers * (1 - in_multisig_mode) == FALSE) {
+        if (num_secp256r1_signers * (1 - in_multisig_mode) == FALSE) {
             return ();
         }
 
@@ -482,17 +493,10 @@ namespace Signers {
             return ();
         }
 
-        // else: At this point we have secp256r1 signer (num_additional_signers > 0)
-        // we're not in multisig and txn was sent with seed signer
-
-        // 0. be defensive about the fact that we only allow seed signing
-        // revisit when additional signer types are supported
-        with_attr error_message("Signers: either secp256r1 or seed signers are expected") {
-            assert multi_signers[0].signer.type = SIGNER_TYPE_STARK;
-        }
-
-        // 1. Limit seed signer only to ETD signer removal
+        // else: At this point we have hws and not in multisig
+        // Limit seed signer only to ETD signer removal
         with_attr error_message("Signers: invalid entry point for seed signing") {
+            assert multi_signers[0].signer.type = SIGNER_TYPE_STARK;
             assert call_array_len = 1;
             assert call_0_to = self;
             assert call_0_sel = REMOVE_SIGNER_WITH_ETD_SELECTOR;
@@ -561,19 +565,26 @@ namespace Signers {
     } (
         hash: felt,
         signature_len: felt, signature: felt*,
-        in_multisig_mode: felt,
-        have_secp256r1_signer: felt
+        multisig_num_signers: felt,
+        have_secp256r1_signer: felt,
     ) -> (is_valid: felt) {
+        let (multi_signers_len , multi_signers) = resolve_signers_from_sig(
+                signature_len, signature);
+        tempvar is_stark_sig = 1 - is_not_zero((signature_len - NATIVE_STARK_SIG_LEN)*(signature_len - STARK_SIG_LEN));
+        tempvar is_secp256r1_sig = 1 - is_not_zero(signature_len - SECP256R1_UINT256_SIG_LEN);
+        tempvar is_multisig_sig = is_le(2, multi_signers_len);
+        tempvar in_multisig_mode = is_not_zero(multisig_num_signers);
 
-        tempvar is_stark_sig = 1 - is_not_zero((signature_len - 2)*(signature_len - 3));
-        tempvar is_secp256r1_sig = 1 - is_not_zero(signature_len - 5);
-        tempvar is_multisig_sig = 1 - is_not_zero(signature_len - 8);
         // only 1 of the _sig params will be assigned 1 and will choose the correct
         // condition below
         if ((is_stark_sig * (1 - have_secp256r1_signer) +
             is_secp256r1_sig * (1 - in_multisig_mode) +
             is_multisig_sig * in_multisig_mode) == TRUE) {
-            return is_valid_signature(hash, signature_len, signature);
+            return is_valid_signature(
+                hash,
+                signature_len, signature,
+                multi_signers_len, multi_signers,
+            );
         }
 
         return (is_valid = FALSE);
@@ -586,21 +597,13 @@ namespace Signers {
         ecdsa_ptr: SignatureBuiltin*,
     }(
         hash: felt,
-        signature_len: felt, signature: felt*
+        signature_len: felt, signature: felt*,
+        multi_signers_len: felt, multi_signers: IndexedSignerModel*,
     ) -> (is_valid: felt) {
         alloc_locals;
 
-        if (signature_len == 2) {
-            // Keep compatibility for STARK signers from default SDKs/CLIs
-            let (signer_0) = Account_signers.read(0);
-            _is_valid_stark_signature(signer_0.signer_0, hash, signature_len, signature);
-            return (is_valid=TRUE);
-        }
-
-        let (multi_signers_len, multi_signers) = resolve_signers_from_sig(
-            signature_len, signature
-        );
-        if (multi_signers_len == 2) {
+        // Single sig consumer-multisig flow - stark + secp256r1
+        if (multi_signers_len == 2 and multi_signers[0].signer.type == SIGNER_TYPE_STARK) {
             let (valid) = Signers._is_valid_stark_signature(
                 multi_signers[0].signer.signer_0,
                 hash,
@@ -625,33 +628,17 @@ namespace Signers {
 
         }
 
-        // Since we handled the multi-signers == 2 case above, we verify that
-        // we have a single-signer sig
-        with_attr error_message(
-            "Signers: sig must contain either single or two signers sig") {
-                assert multi_signers_len = 1;
-        }
-
-        if (multi_signers[0].signer.type == SIGNER_TYPE_STARK) {
-            with_attr error_message("Signers: Invalid signature length") {
-                // 1 signer idx + 2 felts (r,s)
-                assert signature_len = 3;
-            }
-
+        if (multi_signers_len == 1 and multi_signers[0].signer.type == SIGNER_TYPE_STARK) {
+            let sig_offset = is_not_zero(signature_len - NATIVE_STARK_SIG_LEN);  // Support native stark sig
             _is_valid_stark_signature(
                 multi_signers[0].signer.signer_0,
                 hash,
-                signature_len - 1, signature + 1
+                signature_len - sig_offset, signature + sig_offset,
             );
             return (is_valid=TRUE);
         }
 
-        if (multi_signers[0].signer.type == SIGNER_TYPE_SECP256R1) {
-            with_attr error_message("Signers: Invalid signature length") {
-                // 1 signer idx + 2 x uint256 (r,s)
-                assert signature_len = 5;
-            }
-
+        if (multi_signers_len == 1 and multi_signers[0].signer.type == SIGNER_TYPE_SECP256R1) {
             _is_valid_secp256r1_signature(
                 multi_signers[0].signer,
                 hash,

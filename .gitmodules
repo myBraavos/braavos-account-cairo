@@ -1,3 +1,4 @@
 [submodule "lib/secp256r1"]
 	path = lib/secp256r1
-	url = https://github.com/myBraavos/efficient-secp256r1
+	url = git@github.com:myBraavos/efficient-secp256r1.git
+	branch = main
