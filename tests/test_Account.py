@@ -502,7 +502,7 @@ async def test_is_valid_sig_sanity_secp256r1_indexed(init_contracts):
 
 @pytest.mark.asyncio
 async def test_invalid_secp256r1_sig(init_module_scoped_secp256r1_accounts):
-    _, account, _, signer_id, _ = init_module_scoped_secp256r1_accounts
+    _, account, ecc_signer, signer_id, _ = init_module_scoped_secp256r1_accounts
 
     hash = 0
 
@@ -517,6 +517,37 @@ async def test_invalid_secp256r1_sig(init_module_scoped_secp256r1_accounts):
     invalid_rs = [0, 0, 2**139, 0]
     await assert_revert(
         account.is_valid_signature(hash, [signer_id, *invalid_rs]).call(), )
+
+    ecc_signer: TestECCSigner
+    sig = ecc_signer.sign(0xdeadbeef)
+    invalid_signer_id = 0xdeadbeef
+    calldata = [
+        1,
+        account.contract_address,
+        get_selector_from_name("get_public_key"),
+        0,
+        0,
+        0,
+    ]
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            calldata=calldata,
+            signature=[invalid_signer_id, *sig],
+        ),
+        "expected secp256r1 signer",
+    )
+
+    await assert_revert(
+        send_raw_invoke(
+            account,
+            get_selector_from_name("__execute__"),
+            calldata=calldata,
+            signature=[signer_id, 0, 0, 0, 0],
+        ),
+        "invalid signature",
+    )
 
 
 @pytest.mark.asyncio
@@ -1521,15 +1552,54 @@ async def test_multisig_2_signers_in_single_sig(init_contracts):
         get_selector_from_name("balanceOf"), 0, 1, 1, account1.contract_address
     ]
 
+    # valid case
     signer_obj = namedtuple(
         'SignerTuple',
         ['sign'
-         ])(lambda hash:
-            [0, *signer.signer.sign(hash), signer_id, *ecc_signer.sign(hash)])
-    await send_raw_invoke(account1,
-                          get_selector_from_name("__execute__"),
-                          calldata,
-                          signer=signer_obj)
+         ])(lambda tx_hash:
+            [0, *signer.signer.sign(tx_hash), signer_id, *ecc_signer.sign(tx_hash)])
+    await send_raw_invoke(
+        account1,
+        get_selector_from_name("__execute__"),
+        calldata,
+        signer=signer_obj,
+    )
+
+    async def _invalid_case(sig, error_msg):
+        invalid_signer_obj = namedtuple('_st', ['sign'])(lambda tx_hash: sig(tx_hash))
+        await assert_revert(
+            send_raw_invoke(
+                account1,
+                get_selector_from_name("__execute__"),
+                calldata,
+                signer=invalid_signer_obj,
+            ),
+            error_msg,
+        )
+
+    # invalid signature format - dup stark signer
+    await _invalid_case(
+        lambda tx_hash: [0, *signer.signer.sign(tx_hash), 0, *signer.signer.sign(tx_hash)],
+        "unexpected signature",
+    )
+
+    # invalid signature - wrong stark sig
+    await _invalid_case(
+        lambda tx_hash: [0, *[x + 1 for x in signer.signer.sign(tx_hash)], signer_id, *ecc_signer.sign(tx_hash)],
+        "invalid signature",
+    )
+
+    # invalid signature format - dup secp256r1 signer
+    await _invalid_case(
+        lambda tx_hash: [signer_id, *ecc_signer.sign(tx_hash), signer_id, *ecc_signer.sign(tx_hash)],
+        "unexpected signature",
+    )
+
+    # invalid signature - wrong secp256r1 sig
+    await _invalid_case(
+        lambda tx_hash: [0, *signer.signer.sign(tx_hash), signer_id, *[x + 1 for x in ecc_signer.sign(tx_hash)]],
+        "invalid signature",
+    )
 
 
 @pytest.mark.asyncio

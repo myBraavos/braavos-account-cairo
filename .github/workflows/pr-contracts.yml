@@ -23,4 +23,4 @@ jobs:
                 CAIRO_PATH: "${{ github.workspace }}:${{ github.workspace }}/lib/secp256r1"
               run: |
                 pip install -r requirements.txt && \
-                pytest -n auto --cache-clear -vv -x -rP tests/
+                pytest
