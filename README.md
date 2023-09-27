@@ -8,6 +8,8 @@ Things can break and in extreme cases can lead to loss of funds. The contract co
 not yet been audited, the wallet code as well as the contracts themselves can be upgraded
 without a timelock.
 
+Please use with caution. No warranty is given and no responsibility or liability is accepted for any issues that may arise. 
+
 ## Design
 
 The Braavos account contract is comprised of 3 main modules:
