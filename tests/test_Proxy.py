@@ -217,7 +217,7 @@ async def test_upgrade(proxy_init):
     assert execution_info.result.implementation == declaration.class_hash
 
     execution_info = await account1.get_impl_version().call()
-    assert execution_info.result.res == str_to_felt("000.000.011")
+    assert execution_info.result.res == str_to_felt("000.000.012")
 
 
 @pytest.mark.asyncio

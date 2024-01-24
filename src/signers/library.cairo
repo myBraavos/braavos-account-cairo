@@ -887,7 +887,9 @@ namespace Signers {
 
         assert res.retdata_size = 1;
 
-        if (res.retdata[0] != TRUE) {
+        // Support both legacy Accounts and SRC6 compliant accounts
+        tempvar valid = 1 - is_not_zero((res.retdata[0] - TRUE) * (res.retdata[0] - 'VALID'));
+        if (valid == FALSE) {
             return (is_valid=FALSE);
         }
 
