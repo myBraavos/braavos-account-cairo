@@ -1,0 +1,12 @@
+[package]
+name = "braavos_account"
+version = "1.0.0"
+
+[dependencies]
+starknet = ">=2.3.1"
+
+[[target.starknet-contract]]
+allowed-libfuncs-list.name = "all"
+casm-add-pythonic-hints = true
+casm = true
+

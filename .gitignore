@@ -133,3 +133,6 @@ dmypy.json
 # nile
 artifacts/
 node.json
+
+*.DS_Store
+*.swp
