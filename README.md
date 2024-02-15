@@ -80,12 +80,12 @@ The Withdrawal Limit thresholds are set in USDC. For example, to set a low withd
 MySwap-CL's TWAP pricing to determine the value of an applicable transaction in USDC terms.
 
 Applicable transactions are either `transfer` or `approve` transactions on the most commonly used tokens (ETH, USDC, USDT, DAI, WBTC) or a whitelisted set of protocol entrypoints.
-This whitelist for both tokens and contract entrypoints  can be configured manually using the `update_rate_config` entrypoint
+This whitelist for both tokens and contract entrypoints  can be configured manually using the `update_rate_config` entrypoint.
 
 Two thresholds can be set as part of the daily withdrawal limit:
 
 1. Low Limit - controls under which accumulated daily transaction value the _Stark Signer_ can sign even if there are _Strong Signers_ or _Multisig_ defined in the account.
-2. High Limit - Defines under which accumulated daily transaction value a _Strong Signer_ can be used even if _Multisig_ is defined
+2. High Limit - Defines under which accumulated daily transaction value a _Strong Signer_ can be used even if _Multisig_ is defined.
 
 When a transaction is validated without utilizing the Daily Withdrawal Limit's use of a weaker signer,
 i.e. using  _Strong Signer_ even though Daily Withdrawal Limit allows usage of _Stark Signer_ for that  transaction
