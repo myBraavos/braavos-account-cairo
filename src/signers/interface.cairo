@@ -1,12 +1,28 @@
+use starknet::ContractAddress;
 use super::signer_management::SignerManagementComponent::{DeferredRemoveSignerRequest};
 use super::signer_type::SignerType;
-use super::signers::{Secp256r1PubKey, StarkPubKey};
+use super::signers::{Secp256r1PubKey, StarkPubKey, MoaSigner};
 
 #[derive(Drop, PartialEq, Serde)]
 struct GetSignersResponse {
     stark: Array<felt252>,
     secp256r1: Array<felt252>,
     webauthn: Array<felt252>,
+}
+
+#[derive(Drop, starknet::Event)]
+struct OwnerAdded {
+    #[key]
+    new_owner_guid: felt252,
+    signer_type: SignerType,
+    signer_data: Span<felt252>,
+}
+
+#[derive(Drop, starknet::Event)]
+struct OwnerRemoved {
+    #[key]
+    removed_owner_guid: felt252,
+    removed_signer_type: SignerType,
 }
 
 #[starknet::interface]
@@ -67,3 +83,24 @@ trait IMultisigInternal<TState> {
     );
 }
 
+#[derive(Drop, PartialEq, Serde)]
+struct GetMoaSignersResponse {
+    moa: Array<felt252>,
+}
+
+#[starknet::interface]
+trait IMoaSignManagementExternal<TState> {
+    fn get_signers(self: @TState) -> GetMoaSignersResponse;
+    fn is_signer(self: @TState, signer: MoaSigner) -> bool;
+    fn get_signers_len(self: @TState) -> usize;
+    fn add_external_signers(
+        ref self: TState, signers: Array<(ContractAddress, felt252)>, threshold: usize
+    );
+    fn remove_external_signers(ref self: TState, signer_guids: Span<felt252>, threshold: usize);
+}
+
+#[starknet::interface]
+trait IMoaSignManagementInternal<TState> {
+    fn _update_threshold(ref self: TState, threshold: usize, num_signers: usize);
+    fn _add_signers(ref self: TState, signers: Array<(ContractAddress, felt252)>, threshold: usize);
+}

@@ -5,7 +5,7 @@ use array::{ArrayTrait, SpanTrait};
 use ecdsa::check_ecdsa_signature;
 use option::{OptionTrait};
 use serde::Serde;
-use starknet::{library_call_syscall};
+use starknet::{library_call_syscall, ContractAddress, call_contract_syscall};
 use starknet::secp256_trait::{Secp256PointTrait, Signature, is_valid_signature};
 use starknet::secp256r1::{Secp256r1Impl, Secp256r1Point, Secp256r1PointImpl};
 use traits::{Into, TryInto};
@@ -35,8 +35,8 @@ impl StarkSignerMethods of StarkSignerMethodsTrait {
     }
 
     fn exists(self: @StarkPubKey) -> Option<felt252> {
-        let guid = self.guid();
-        let guid_exists = exists(SignerType::Stark, self.guid());
+        let guid: felt252 = self.guid();
+        let guid_exists = exists(SignerType::Stark, guid);
         if guid_exists {
             Option::Some(guid)
         } else {
@@ -278,3 +278,131 @@ impl Secp256r1SignerMethods of Secp256r1SignerMethodsTrait {
     }
 }
 
+#[derive(Copy, Drop, Serde, starknet::Store)]
+struct MoaSigner {
+    address: ContractAddress,
+    pub_key: felt252,
+}
+
+#[derive(Copy, Drop, Serde)]
+struct MoaExtSigner {
+    signature_type: u128, // for future use
+    signer: MoaSigner,
+    preamble_r: felt252,
+    preamble_s: felt252,
+    ext_sig: Span<felt252>
+}
+
+impl MoaExtSignerIntoFelt252 of Into<MoaExtSigner, felt252> {
+    fn into(self: MoaExtSigner) -> felt252 {
+        self.signer.guid()
+    }
+}
+
+#[generate_trait]
+impl MoaExtSignerHelperMethods of MoaExtSignerHelperMethodsTrait {
+    /// @param signature The signature of the transaction
+    /// Format of a signature: [ A_type, A_address, A_pub_key, A_r, A_s, A_sig_len, A_ext_sig, ...etc]
+    /// The parsing here allows duplicates. They are filtered later.
+    /// @return The list of signers from the transaction signature
+    fn resolve_signers_from_sig(signature: Span<felt252>) -> Array::<MoaExtSigner> {
+        let mut signers = ArrayTrait::<MoaExtSigner>::new();
+
+        let mut i = 0;
+        loop {
+            if (i >= signature.len()) {
+                break;
+            }
+            let signature_type: u128 = (*signature.at(i)).try_into().unwrap();
+            assert(signature_type == 0, 'INVALID_SIG_TYPE');
+            let sig_len: usize = (*signature.at(i + 5)).try_into().unwrap();
+            assert(sig_len > 0, 'INVALID_SIG');
+            let inner_signer = MoaSigner {
+                address: (*signature.at(i + 1)).try_into().unwrap(), pub_key: *signature.at(i + 2),
+            };
+            signers
+                .append(
+                    MoaExtSigner {
+                        signature_type,
+                        signer: inner_signer,
+                        preamble_r: *signature.at(i + 3),
+                        preamble_s: *signature.at(i + 4),
+                        ext_sig: signature.slice(i + 6, sig_len)
+                    }
+                );
+            i += 6 + sig_len;
+        };
+        assert(signers.len() > 0, 'INVALID_SIG');
+        signers
+    }
+
+    fn get_signers_guids(mut signers: Span<MoaExtSigner>) -> Array<felt252> {
+        let mut guids: Array<felt252> = ArrayTrait::new();
+
+        loop {
+            match signers.pop_front() {
+                Option::Some(signer) => { guids.append(signer.signer.guid()); },
+                Option::None(_) => { break (); },
+            };
+        };
+
+        guids
+    }
+}
+
+mod MoaConsts {
+    const IS_VALID_SIGNATURE_FUNCTION_SELECTOR: felt252 = selector!("is_valid_signature");
+}
+
+#[generate_trait]
+impl MoaSignerMethods of MoaSignerMethodsTrait {
+    /// Returns true if given signature is valid
+    fn validate_signature(
+        self: @MoaSigner, hash: felt252, preamble_r: felt252, preamble_s: felt252
+    ) -> bool {
+        check_ecdsa_signature(hash, *self.pub_key, preamble_r, preamble_s)
+    }
+
+
+    /// @param hash The transaction hash
+    /// @param sig The external signature
+    ///
+    /// Panic if external signature verification result is not VALIDATED
+    fn assert_external_signature(self: @MoaSigner, hash: felt252, sig: Span<felt252>) {
+        let mut calldata = ArrayTrait::<felt252>::new();
+        calldata.append(hash);
+        sig.serialize(ref calldata);
+
+        let res = call_contract_syscall(
+            *self.address, MoaConsts::IS_VALID_SIGNATURE_FUNCTION_SELECTOR, calldata.span()
+        )
+            .unwrap_syscall();
+
+        assert(res.len() == 1, 'INVALID_SIG_RESULT_LENGTH');
+        assert(
+            *res.at(0) == 1 || *res.at(0) == starknet::VALIDATED, 'INVALID_SIG_VERIFICATION_RESULT'
+        );
+    }
+
+    /// Returns a single felt representation of the signer. In this case it is the address and public key
+    fn guid(self: @MoaSigner) -> felt252 {
+        let mut serialized = ArrayTrait::new();
+        self.serialize(ref serialized);
+        poseidon::poseidon_hash_span(serialized.span())
+    }
+
+    fn exists(self: @MoaSigner) -> Option<felt252> {
+        let guid = self.guid();
+        let guid_exists = exists(SignerType::MOA, guid);
+        if guid_exists {
+            Option::Some(guid)
+        } else {
+            Option::None
+        }
+    }
+
+    /// Adds this signer pub key to the account storage
+    fn add_signer(self: @MoaSigner) {
+        add_signer(SignerType::MOA, self.guid());
+    }
+}

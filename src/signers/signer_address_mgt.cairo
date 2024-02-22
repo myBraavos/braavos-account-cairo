@@ -14,6 +14,7 @@ mod Consts {
     const SECP256R1_SIGNERS_BASE_ADDRESS: felt252 = selector!("secp256r1_signers");
     const STARK_SIGNERS_BASE_ADDRESS: felt252 = selector!("stark_signers");
     const WEBAUTHN_SIGNERS_BASE_ADDRESS: felt252 = selector!("webauthn_signers");
+    const MOA_SIGNERS_BASE_ADDRESS: felt252 = selector!("moa_signers");
 }
 
 /// Returns a storage address which is the beginning of a series of guids of signers of the given
@@ -30,6 +31,7 @@ fn get_signer_type_base_address(signer_type: SignerType) -> StorageBaseAddress {
         SignerType::Webauthn => {
             storage_base_address_from_felt252(Consts::WEBAUTHN_SIGNERS_BASE_ADDRESS)
         },
+        SignerType::MOA => { storage_base_address_from_felt252(Consts::MOA_SIGNERS_BASE_ADDRESS) },
     }
 }
 

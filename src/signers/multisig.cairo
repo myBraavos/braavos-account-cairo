@@ -1,6 +1,8 @@
 #[starknet::component]
 mod MultisigComponent {
-    use braavos_account::signers::signer_address_mgt::{get_signers};
+    use braavos_account::signers::signer_address_mgt::{
+        get_signers, get_signers_by_type, SignerType
+    };
     use braavos_account::signers::interface;
     use braavos_account::utils::asserts::assert_self_caller;
     use braavos_account::dwl::interface::IDwlInternal;
@@ -73,6 +75,28 @@ mod MultisigComponent {
             }
         }
 
+        fn get_multisig_threshold(self: @ComponentState<TContractState>) -> usize {
+            self.multisig_threshold.read()
+        }
+    }
+
+    #[embeddable_as(MultisigMoaImpl)]
+    impl ExternalMoaImpl<
+        TContractState, +HasComponent<TContractState>, +Drop<TContractState>,
+    > of interface::IMultisig<ComponentState<TContractState>> {
+        /// @param multisig_threshold New threshold value
+        /// Sets an adjusted threshold for the number of signatures required to
+        /// validate a transaction
+        fn set_multisig_threshold(
+            ref self: ComponentState<TContractState>, multisig_threshold: usize
+        ) {
+            assert_self_caller();
+            let num_moa_signers = get_signers_by_type(SignerType::MOA).len();
+            self._set_multisig_threshold_inner(multisig_threshold, num_moa_signers);
+        }
+
+        /// @return Adjusted threshold number of signatures required
+        /// for transaction confirmation
         fn get_multisig_threshold(self: @ComponentState<TContractState>) -> usize {
             self.multisig_threshold.read()
         }

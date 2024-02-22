@@ -1,6 +1,8 @@
 const EMPTY_SIGNER_TYPE: felt252 = 0;
 const STARK_SIGNER_TYPE: felt252 = 1;
 const SECP256R1_SIGNER_TYPE: felt252 = 2;
+const _DEPREACATED_SWS_SIGNER_TYPE: felt252 = 3;
+const MOA_SIGNER_TYPE: felt252 = 4;
 const WEBAUTHN_SIGNER_TYPE: felt252 = 5;
 
 #[derive(Copy, Drop, PartialEq, starknet::Store)]
@@ -10,6 +12,7 @@ enum SignerType {
     Stark,
     Secp256r1,
     Webauthn,
+    MOA,
 }
 
 
@@ -31,6 +34,8 @@ impl SignerTypeToFelt of Into<SignerType, felt252> {
             SECP256R1_SIGNER_TYPE
         } else if self == SignerType::Webauthn {
             WEBAUTHN_SIGNER_TYPE
+        } else if self == SignerType::MOA {
+            MOA_SIGNER_TYPE
         } else {
             EMPTY_SIGNER_TYPE
         }
@@ -45,6 +50,8 @@ impl FeltTryIntoSignerType of TryInto<felt252, SignerType> {
             Option::Some(SignerType::Secp256r1)
         } else if self == WEBAUTHN_SIGNER_TYPE {
             Option::Some(SignerType::Webauthn)
+        } else if self == MOA_SIGNER_TYPE {
+            Option::Some(SignerType::MOA)
         } else {
             Option::Some(SignerType::Empty)
         }

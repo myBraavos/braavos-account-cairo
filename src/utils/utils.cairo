@@ -3,6 +3,15 @@ use option::{OptionTrait};
 use serde::Serde;
 use traits::{Into, TryInto};
 use integer::{u512, u256_as_non_zero, u512_safe_div_rem_by_u256, u256_wide_mul};
+use starknet::{TxInfo, SyscallResultTrait};
+use starknet::syscalls::call_contract_syscall;
+use starknet::account::Call;
+
+
+mod Consts {
+    const L1_GAS_RESOURCE: felt252 = 'L1_GAS';
+    const L2_GAS_RESOURCE: felt252 = 'L2_GAS';
+}
 
 trait IntoOrPanic<S, T> {
     fn into_or_panic(self: S) -> T;
@@ -166,3 +175,54 @@ fn u32_shr_div_for_pos(pos_in_u32: u32) -> u32 {
     }
 }
 
+
+/// Helper function that fetches the fee and tx version from exec info. Fee calculation
+/// depends on tx version.
+/// for v1 we take the max_info value
+/// for v3 we return (L1_max_amount * L1_max_price_per_unit) + L2_max_amount * (L2_max_price_per_unit + tip)
+fn extract_fee_from_tx(tx_info: @TxInfo, version: u256) -> u256 {
+    if version.low == 1 {
+        return (*tx_info.max_fee).into();
+    } else if version.low == 3 {
+        assert((*tx_info.resource_bounds).len() == 2, 'INVALID_TX');
+        let first_item = (*tx_info.resource_bounds).at(0);
+        let second_item = (*tx_info.resource_bounds).at(1);
+        let (l1_gas, l2_gas) = if first_item.resource == @Consts::L1_GAS_RESOURCE {
+            (first_item, second_item)
+        } else {
+            (second_item, first_item)
+        };
+        assert(l1_gas.resource == @Consts::L1_GAS_RESOURCE, 'INVALID_TX');
+        assert(l2_gas.resource == @Consts::L2_GAS_RESOURCE, 'INVALID_TX');
+        let l1_amount: u256 = (*l1_gas.max_amount).into();
+        let l1_max_price_per_unit: u256 = (*l1_gas.max_price_per_unit).into();
+        let l2_amount: u256 = (*l2_gas.max_amount).into();
+        let l2_max_price_per_unit: u256 = (*l2_gas.max_price_per_unit).into();
+
+        let l1_fee = l1_amount * l1_max_price_per_unit;
+        let l2_fee = l2_amount * (l2_max_price_per_unit + (*tx_info.tip).into());
+        return l1_fee + l2_fee;
+    } else {
+        panic_with_felt252('INVALID_TX');
+        0
+    }
+}
+
+fn execute_calls(mut calls: Span<Call>) -> Array<Span<felt252>> {
+    let mut result = ArrayTrait::new();
+    loop {
+        match calls.pop_front() {
+            Option::Some(call) => {
+                let mut res = call_contract_syscall(
+                    address: *call.to,
+                    entry_point_selector: *call.selector,
+                    calldata: *call.calldata
+                )
+                    .unwrap_syscall();
+                result.append(res);
+            },
+            Option::None => { break; },
+        };
+    };
+    result
+}

@@ -17,6 +17,7 @@ mod SignerManagementComponent {
     use starknet::syscalls::get_execution_info_v2_syscall;
     use braavos_account::dwl::interface::IDwlInternal;
     use braavos_account::signers::interface;
+    use braavos_account::signers::interface::{OwnerAdded, OwnerRemoved};
     use braavos_account::signers::signer_address_mgt::{
         remove_signer, remove_all_signers, get_first_signer, num_strong_signers, exists,
         any_strong_signer, get_signers
@@ -57,21 +58,6 @@ mod SignerManagementComponent {
     #[derive(Copy, Drop, Serde, starknet::Event)]
     struct DeferredRemoveSignerRequestExpired {
         expired_deferred_request: DeferredRemoveSignerRequest,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct OwnerAdded {
-        #[key]
-        new_owner_guid: felt252,
-        signer_type: SignerType,
-        signer_data: Span<felt252>,
-    }
-
-    #[derive(Drop, starknet::Event)]
-    struct OwnerRemoved {
-        #[key]
-        removed_owner_guid: felt252,
-        removed_signer_type: SignerType,
     }
 
     #[storage]
@@ -302,7 +288,7 @@ mod SignerManagementComponent {
             }
         }
 
-        /// removes strong secp256r1 signer from account. 
+        /// removes strong secp256r1 signer from account.
         /// @param guid - represents the hash of the signer's public key
         /// @param signer_type - type of the signer to remove
         /// @param multisig_threshold - when removing strong signer, multisig threshold can be changed

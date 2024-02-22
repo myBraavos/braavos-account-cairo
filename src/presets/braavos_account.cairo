@@ -12,8 +12,8 @@ mod BraavosAccount {
     use option::{Option, OptionTrait};
     use serde::Serde;
     use starknet::info::v2::ExecutionInfo;
-    use starknet::{ClassHash, get_contract_address, get_tx_info, SyscallResultTrait, TxInfo};
-    use starknet::syscalls::{call_contract_syscall, get_execution_info_v2_syscall,};
+    use starknet::{ClassHash, get_contract_address, get_tx_info, SyscallResultTrait};
+    use starknet::syscalls::get_execution_info_v2_syscall;
     use starknet::account::Call;
     use traits::{Into, TryInto};
 
@@ -35,6 +35,7 @@ mod BraavosAccount {
     use braavos_account::signers::signer_address_mgt::{get_first_signer, any, any_strong_signer};
     use braavos_account::upgradable::upgradable::UpgradableComponent;
     use braavos_account::utils::asserts::assert_self_caller;
+    use braavos_account::utils::utils::{execute_calls, extract_fee_from_tx};
     use braavos_account::outside_execution::outside_execution::OutsideExecComponent;
 
     mod Errors {
@@ -50,8 +51,6 @@ mod BraavosAccount {
     }
 
     mod Consts {
-        const L1_GAS_RESOURCE: felt252 = 'L1_GAS';
-        const L2_GAS_RESOURCE: felt252 = 'L2_GAS';
         // 0.015 ETH
         const MAX_ETD_FEE_V1: u256 = 15000000000000000;
         // 100 STRK
@@ -184,39 +183,6 @@ mod BraavosAccount {
 
         fn is_any_signature_validated(self: @ProcessedSignature) -> bool {
             *self.stark_validated || *self.secp256r1_validated || *self.webauthn_validated
-        }
-    }
-
-
-    /// Helper function that fetches the fee and tx version from exec info. Fee calculation 
-    /// depends on tx version. 
-    /// for v1 we take the max_info value
-    /// for v3 we return (L1_max_amount * L1_max_price_per_unit) + L2_max_amount * (L2_max_price_per_unit + tip)
-    fn _extract_fee_from_tx(tx_info: @TxInfo, version: u256) -> u256 {
-        if version.low == 1 {
-            return (*tx_info.max_fee).into();
-        } else if version.low == 3 {
-            assert((*tx_info.resource_bounds).len() == 2, Errors::INVALID_TX);
-            let first_item = (*tx_info.resource_bounds).at(0);
-            let second_item = (*tx_info.resource_bounds).at(1);
-            let (l1_gas, l2_gas) = if first_item.resource == @Consts::L1_GAS_RESOURCE {
-                (first_item, second_item)
-            } else {
-                (second_item, first_item)
-            };
-            assert(l1_gas.resource == @Consts::L1_GAS_RESOURCE, Errors::INVALID_TX);
-            assert(l2_gas.resource == @Consts::L2_GAS_RESOURCE, Errors::INVALID_TX);
-            let l1_amount: u256 = (*l1_gas.max_amount).into();
-            let l1_max_price_per_unit: u256 = (*l1_gas.max_price_per_unit).into();
-            let l2_amount: u256 = (*l2_gas.max_amount).into();
-            let l2_max_price_per_unit: u256 = (*l2_gas.max_price_per_unit).into();
-
-            let l1_fee = l1_amount * l1_max_price_per_unit;
-            let l2_fee = l2_amount * (l2_max_price_per_unit + (*tx_info.tip).into());
-            return l1_fee + l2_fee;
-        } else {
-            panic_with_felt252(Errors::INVALID_TX);
-            0
         }
     }
 
@@ -493,12 +459,15 @@ mod BraavosAccount {
     }
 
     #[abi(embed_v0)]
-    impl ExternalMethods of interface::IBraavosAccount<ContractState> {
+    impl ExternalGetVersionImpl of interface::IGetVersion<ContractState> {
         /// get_version returns the current version of the account
         fn get_version(self: @ContractState) -> felt252 {
             super::ACCOUNT_VERSION
         }
+    }
 
+    #[abi(embed_v0)]
+    impl ExternalMethods of interface::IBraavosAccount<ContractState> {
         /// This function is responsible to initialize the account during construction.
         /// @param stark_pub_key - This account's stark signer public key
         /// @param signature - The signature contains several parameters that affect
@@ -568,7 +537,7 @@ mod BraavosAccount {
                 .dwl
                 ._handle_bypass_calls_pre_execute(calls, block_timestamp);
 
-            let res = self._execute_calls(calls, tx_info.transaction_hash, tx_info.signature);
+            let res = execute_calls(calls);
 
             // If the account has no dwl set, or the calls are not valid bypass calls
             // then we are done. Otherwise this is a dwl compliant call and we need
@@ -578,7 +547,7 @@ mod BraavosAccount {
                     @self, tx_info.transaction_hash, tx_info.signature, false
                 );
                 let version = Into::<felt252, u256>::into(tx_info.version);
-                let fee = _extract_fee_from_tx(@tx_info, version);
+                let fee = extract_fee_from_tx(@tx_info, version);
                 let dwl_status_post_execute = self
                     .dwl
                     ._handle_bypass_calls_post_execute(
@@ -587,7 +556,7 @@ mod BraavosAccount {
                         processed_sig.stark_validated,
                         processed_sig.is_any_strong_signature_validated(),
                         processed_sig.num,
-                        self.multisig.get_multisig_threshold(),
+                        self.multisig.multisig_threshold.read(),
                         fee,
                         version.low.into()
                     );
@@ -634,7 +603,7 @@ mod BraavosAccount {
                 @self, tx_hash, signature, !is_query_txn_ver
             );
             // also asserts that the etd call is valid meaning we will REJECT in __validate__
-            let fee = _extract_fee_from_tx(@tx_info, version);
+            let fee = extract_fee_from_tx(@tx_info, version);
             let is_etd_selector = _assert_valid_etd_call(
                 calls, fee, version, tx_info.paymaster_data
             );
@@ -730,7 +699,7 @@ mod BraavosAccount {
                 .dwl
                 ._handle_bypass_calls_pre_execute(calls, block_timestamp);
 
-            self._execute_calls(calls, tx_info.transaction_hash, tx_info.signature);
+            execute_calls(calls);
 
             let (range, _, _, _) = self
                 .dwl
@@ -755,7 +724,7 @@ mod BraavosAccount {
 
     impl BraavosAccountInternalImpl of interface::IBraavosAccountInternal<ContractState> {
         fn _get_signer_type_in_account(self: @ContractState) -> interface::RequiredSigner {
-            if self.multisig.get_multisig_threshold() > 1 {
+            if self.multisig.multisig_threshold.read() > 1 {
                 return interface::RequiredSigner::Multisig;
             } else if any_strong_signer() {
                 return interface::RequiredSigner::Strong;
@@ -777,30 +746,6 @@ mod BraavosAccount {
             );
 
             _validate_processed_signature(self, processed_sig, false, block_timestamp)
-        }
-
-        fn _execute_calls(
-            ref self: ContractState,
-            mut calls: Span<Call>,
-            tx_hash: felt252,
-            signature: Span<felt252>
-        ) -> Array<Span<felt252>> {
-            let mut result = ArrayTrait::new();
-            loop {
-                match calls.pop_front() {
-                    Option::Some(call) => {
-                        let mut res = call_contract_syscall(
-                            address: *call.to,
-                            entry_point_selector: *call.selector,
-                            calldata: *call.calldata
-                        )
-                            .unwrap_syscall();
-                        result.append(res);
-                    },
-                    Option::None => { break; },
-                };
-            };
-            result
         }
     }
 }

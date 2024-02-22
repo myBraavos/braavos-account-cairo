@@ -30,7 +30,6 @@ trait IBraavosAccount<TState> {
 
     // Initializer from BraavosBaseAccount
     fn initializer(ref self: TState, stark_pub_key: StarkPubKey) -> ();
-    fn get_version(self: @TState) -> felt252;
 
     fn get_required_signer(
         ref self: TState, calls: Span<Call>, fee_amount: u128, tx_version: felt252
@@ -47,8 +46,24 @@ trait IBraavosAccountInternal<TState> {
         block_timestamp: u64,
         transaction_ver: felt252,
     ) -> felt252;
+}
 
-    fn _execute_calls(
-        ref self: TState, calls: Span<Call>, tx_hash: felt252, signature: Span<felt252>
-    ) -> Array<Span<felt252>>;
+
+#[starknet::interface]
+trait IBraavosMOA<TState> {
+    // ISRC6
+    fn __validate__(ref self: TState, calls: Span<Call>) -> felt252;
+    fn __execute__(ref self: TState, calls: Span<Call>) -> Array<Span<felt252>>;
+    fn is_valid_signature(self: @TState, hash: felt252, signature: Span<felt252>) -> felt252;
+
+    // Declare / Deploy validation
+    fn __validate_deploy__(
+        self: @TState, class_hash: felt252, salt: felt252, stark_pub_key: StarkPubKey,
+    ) -> felt252;
+    fn __validate_declare__(self: @TState, class_hash: felt252) -> felt252;
+}
+
+#[starknet::interface]
+trait IGetVersion<TState> {
+    fn get_version(self: @TState) -> felt252;
 }

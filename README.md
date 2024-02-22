@@ -1,5 +1,7 @@
 # Braavos Account Contract v1.0.0
 
+For the Braavos Multi Owner Account (MOA) please refer to [README_MOA.md](./README_MOA.md)
+
 #### Class Hashes
 *Braavos Account* - `0x00816dd0297efc55dc1e7559020a3a825e81ef734b558f03c83325d4da7e6253`
 
@@ -72,7 +74,7 @@ _Stark Signer_: *1*, _Hardware Signer_: *2*, _Webauthn Signer_: *5*
 
 ### Daily Withdrawal Limit (`src/dwl/`)
 
-The Daily Withdrawal Limit is a feature that allows relaxtion of _Strong Signer_ and _Multisig_ requirements
+The Daily Withdrawal Limit is a feature that allows relaxation of _Strong Signer_ and _Multisig_ requirements
 for certain types of transactions. All applicable transactions are analyzed for their value (actual token value + gas) and are accumulated per calendar day. While the
 accumulated amount is under a certain threshold, a weaker signer can be used to validate enabling lower fees and simpler User Experience for lower value transactions.
 
@@ -92,7 +94,7 @@ i.e. using  _Strong Signer_ even though Daily Withdrawal Limit allows usage of _
 then the transaction value is not accumulated towards the Withdraw Limit.
 
 ### Outside Execution (`src/outside_execution/`)
-This feature is intended to allow different protocols to submit transactions on behalf of the user, given the user had signed the appropriate transactions beforhand. This contract implements [SNIP-9 version 2](https://github.com/starknet-io/SNIPs/blob/main/SNIPS/snip-9.md).
+This feature is intended to allow different protocols to submit transactions on behalf of the user, given the user had signed the appropriate transactions beforehand. This contract implements [SNIP-9 version 2](https://github.com/starknet-io/SNIPs/blob/main/SNIPS/snip-9.md).
 
 ## Building and Testing
 
@@ -114,7 +116,7 @@ To run tests:
 > pytest
 
 ## Acknowledgements
-- This project utilzes 2 separate implementations of SHA256 for pre/post regenesis support:
+- This project utilizes 2 separate implementations of SHA256 for pre/post regenesis support:
     - Cairo 0 implementation (as a library call) by the Cartridge team: [cairo-sha256](https://github.com/cartridge-gg/cairo-sha256)
     - Cairo implementation from the [Alexandria](https://github.com/keep-starknet-strange/alexandria) project
 

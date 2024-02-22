@@ -3,6 +3,7 @@ mod OutsideExecComponent {
     use braavos_account::outside_execution::interface::{IOutsideExecution_V2, OutsideExecution};
     use braavos_account::outside_execution::hash::calculate_outside_execution_hash;
     use braavos_account::account::interface::IBraavosAccountInternal;
+    use braavos_account::utils::utils::execute_calls;
     use starknet::{
         ContractAddress, get_contract_address, get_caller_address, get_block_timestamp, get_tx_info
     };
@@ -61,8 +62,7 @@ mod OutsideExecComponent {
 
             self.outside_nonces.write(outside_execution.nonce, true);
 
-            let mut mut_contract = self.get_contract_mut();
-            mut_contract._execute_calls(outside_execution.calls, tx_hash, signature)
+            execute_calls(outside_execution.calls)
         }
 
         fn is_valid_outside_execution_nonce(
