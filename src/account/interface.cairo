@@ -1,6 +1,7 @@
+use starknet::ClassHash;
 use starknet::account::Call;
 
-use braavos_account::signers::signers::{Secp256r1PubKey, StarkPubKey};
+use braavos_account::signers::signers::{Secp256r1PubKey, SignerType, StarkPubKey};
 
 const ISRC6_ID: felt252 = 0x2ceccef7f994940b3962a6c67e0ba4fcd37df7d131417c604f91e03caecc1cd;
 const IACCOUNT_ID_LEGACY_OZ_1: felt252 = 0xf10dbd44;
@@ -13,6 +14,30 @@ enum RequiredSigner {
     Stark,
     Strong,
     Multisig,
+}
+
+/// AdditionalDeploymentParams represents deployment parameters that should not participate
+/// in address computation
+/// @param account_implementation - chash of the account we're deploying
+/// @param signer_type - type of strong signer which can be added during init
+/// @param secp256r1_signer - pub key of the strong signer
+/// @param multisig_threshold - requested multisig threshold
+/// @param withdrawal_limit_low
+/// @param fee_rate - if dwl limit is set, eth fee rate must be attached
+/// @param stark_fee_rate - if dwl limit is set, stark fee rate must be attached
+/// @param chain_id - the chain id for deployment
+/// @param deployment_params_signature - The stark sig on the poseidon hash over all members
+#[derive(Copy, Drop, Serde)]
+struct AdditionalDeploymentParams {
+    account_implementation: ClassHash,
+    signer_type: SignerType,
+    secp256r1_signer: Secp256r1PubKey,
+    multisig_threshold: usize,
+    withdrawal_limit_low: u128,
+    fee_rate: u128,
+    stark_fee_rate: u128,
+    chain_id: felt252,
+    deployment_params_signature: (felt252, felt252),
 }
 
 #[starknet::interface]
@@ -30,6 +55,11 @@ trait IBraavosAccount<TState> {
 
     // Initializer from BraavosBaseAccount
     fn initializer(ref self: TState, stark_pub_key: StarkPubKey) -> ();
+
+    // Initializer from Braavos Account Factory
+    fn initializer_from_factory(
+        ref self: TState, stark_pub_key: StarkPubKey, deployment_params: AdditionalDeploymentParams
+    );
 
     fn get_required_signer(
         ref self: TState, calls: Span<Call>, fee_amount: u128, tx_version: felt252

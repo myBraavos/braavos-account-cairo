@@ -275,6 +275,274 @@ async def test_deployment_from_UDC(init_starknet, account_declare,
     devnet_account.signer = devnet_account_orig_signer
 
 
+@pytest.mark.parametrize("is_v3", [True, False])
+@pytest.mark.parametrize([
+    "secp256r1_keypair",
+    "is_webauthn",
+    "multisig_threshold",
+    "withdrawal_limit_low",
+    "fee_rate",
+], [
+    (None, False, 0, 0, 0),
+    (generate_secp256r1_keypair(), False, 2, 0, 0),
+    (generate_secp256r1_keypair(), True, 2, 0, 0),
+    (generate_secp256r1_keypair(), False, 0, 0, 0),
+    (generate_secp256r1_keypair(), True, 0, 0, 0),
+    (generate_secp256r1_keypair(), False, 0, 50 * USDC, 100 * USDC),
+    (generate_secp256r1_keypair(), True, 0, 50 * USDC, 100 * USDC),
+    (generate_secp256r1_keypair(), False, 2, 50 * USDC, 100 * USDC),
+    (generate_secp256r1_keypair(), True, 2, 50 * USDC, 100 * USDC),
+])
+@pytest.mark.asyncio
+async def test_deployment_from_factory(
+        init_starknet, account_declare, declare_deploy_v1,
+        account_contracts_str, init_account_factory, is_v3, secp256r1_keypair,
+        is_webauthn, multisig_threshold, withdrawal_limit_low, fee_rate):
+    devnet_url, devnet_client, devnet_account = init_starknet
+    account_factory_address, _ = init_account_factory
+    account_chash, base_account_chash, _, _ = account_declare
+    base_account_sierra_str, _, _, _ = account_contracts_str
+    devnet_account: Account
+    devnet_client: FullNodeClient
+
+    stark_privk = random.randint(1, 10**10)
+    stark_pubk = private_to_stark_key(stark_privk)
+    stark_signer = create_stark_signer(stark_privk)
+    strong_signer_type = WEBAUTHN_SIGNER_TYPE if is_webauthn else SECP256R1_SIGNER_TYPE
+
+    strong_signer_field = [0, 0, 0, 0, 0] if secp256r1_keypair is None else [
+        strong_signer_type, *flatten_seq(secp256r1_keypair[1])
+    ]
+    aux_data = [
+        account_chash,
+        *strong_signer_field,
+        multisig_threshold,
+        withdrawal_limit_low,
+        fee_rate,
+        fee_rate,
+        StarknetChainId.TESTNET,
+    ]
+    aux_hash = poseidon_hash_many(aux_data)
+    aux_sig = message_signature(aux_hash, stark_privk)
+
+    additional_depl_data = [*aux_data, *aux_sig]
+
+    deployment_call = Call(
+        to_addr=account_factory_address,
+        selector=get_selector_from_name("deploy_braavos_account"),
+        calldata=[
+            stark_pubk,
+            len(additional_depl_data), *additional_depl_data
+        ])
+    expected_address = compute_address(class_hash=base_account_chash,
+                                       salt=stark_pubk,
+                                       constructor_calldata=[stark_pubk],
+                                       deployer_address=0)
+    exec_txn = await devnet_account.execute(
+        calls=deployment_call,
+        max_fee=int(0.1 * 10**18),
+    )
+    await devnet_client.wait_for_tx(exec_txn.transaction_hash)
+
+    exec = await devnet_account.execute(
+        Call(
+            to_addr=utils_v2.STRK_ADDRESS if is_v3 else ETH_TOKEN_ADDRESS,
+            selector=get_selector_from_name("transfer"),
+            calldata=[
+                expected_address,
+                105 * 10**18,
+                0,
+            ],
+        ),
+        max_fee=int(0.1 * 10**18),
+    )
+    await devnet_client.wait_for_tx(exec.transaction_hash)
+
+    deployed_account = Account(
+        client=devnet_client,
+        address=expected_address,
+        key_pair=KeyPair.from_private_key(stark_privk),
+        chain=StarknetChainId.TESTNET,
+    )
+
+    deployed_account_chash = await devnet_client.get_class_hash_at(
+        deployed_account.address)
+    assert deployed_account_chash == account_chash, "wrong account chash between ctor and init"
+    balanceof_call = Call(
+        to_addr=int(FEE_CONTRACT_ADDRESS, 16),
+        selector=get_selector_from_name('balanceOf'),
+        calldata=[deployed_account.address],
+    )
+
+    secp_signer = None if secp256r1_keypair is None else (
+        create_webauthn_signer(secp256r1_keypair[0])
+        if is_webauthn else create_secp256r1_signer(secp256r1_keypair[0]))
+    account_signer = deployed_account.signer if secp_signer is None else (
+        secp_signer if multisig_threshold == 0 else create_multisig_signer(
+            stark_signer, secp_signer))
+    deployed_account.signer = account_signer
+    await execute_calls(deployed_account, balanceof_call, execute_v3=is_v3)
+
+
+@pytest.mark.parametrize("init_from_3rd_party_account", [True, False])
+@pytest.mark.parametrize("is_v3", [True, False])
+@pytest.mark.parametrize([
+    "secp256r1_keypair",
+    "is_webauthn",
+    "multisig_threshold",
+    "withdrawal_limit_low",
+    "fee_rate",
+], [
+    (None, False, 0, 0, 0),
+    (generate_secp256r1_keypair(), False, 2, 0, 0),
+    (generate_secp256r1_keypair(), True, 2, 0, 0),
+    (generate_secp256r1_keypair(), False, 0, 0, 0),
+    (generate_secp256r1_keypair(), True, 0, 0, 0),
+    (generate_secp256r1_keypair(), False, 0, 50 * USDC, 100 * USDC),
+    (generate_secp256r1_keypair(), True, 0, 50 * USDC, 100 * USDC),
+    (generate_secp256r1_keypair(), False, 2, 50 * USDC, 100 * USDC),
+    (generate_secp256r1_keypair(), True, 2, 50 * USDC, 100 * USDC),
+])
+@pytest.mark.asyncio
+async def test_deployment_from_malicious_factory_and_init_from_account(
+        init_starknet, account_declare, declare_deploy_v1,
+        account_contracts_str, init_account_factory,
+        init_from_3rd_party_account, is_v3, secp256r1_keypair, is_webauthn,
+        multisig_threshold, withdrawal_limit_low, fee_rate):
+    devnet_url, devnet_client, devnet_account = init_starknet
+    account_factory_address, malicious_factory_chash = init_account_factory
+    account_chash, base_account_chash, _, _ = account_declare
+    base_account_sierra_str, _, _, _ = account_contracts_str
+    devnet_account: Account
+    devnet_client: FullNodeClient
+
+    factor_upgrade_txn = await devnet_account.execute(
+        Call(
+            to_addr=account_factory_address,
+            selector=get_selector_from_name('upgrade'),
+            calldata=[malicious_factory_chash],
+        ),
+        auto_estimate=True,
+    )
+    await devnet_client.wait_for_tx(factor_upgrade_txn.transaction_hash)
+
+    stark_privk = random.randint(1, 10**10)
+    stark_pubk = private_to_stark_key(stark_privk)
+    stark_signer = create_stark_signer(stark_privk)
+    strong_signer_type = WEBAUTHN_SIGNER_TYPE if is_webauthn else SECP256R1_SIGNER_TYPE
+
+    strong_signer_field = [0, 0, 0, 0, 0] if secp256r1_keypair is None else [
+        strong_signer_type, *flatten_seq(secp256r1_keypair[1])
+    ]
+    aux_data = [
+        account_chash,
+        *strong_signer_field,
+        multisig_threshold,
+        withdrawal_limit_low,
+        fee_rate,
+        fee_rate,
+        StarknetChainId.TESTNET,
+    ]
+    aux_hash = poseidon_hash_many(aux_data)
+    aux_sig = message_signature(aux_hash, stark_privk)
+
+    additional_depl_data = [*aux_data, *aux_sig]
+    deployment_call = Call(
+        to_addr=account_factory_address,
+        selector=get_selector_from_name("deploy_braavos_account"),
+        calldata=[
+            stark_pubk,
+            len(additional_depl_data), *additional_depl_data
+        ])
+    expected_address = compute_address(class_hash=base_account_chash,
+                                       salt=stark_pubk,
+                                       constructor_calldata=[stark_pubk],
+                                       deployer_address=0)
+    exec_txn = await devnet_account.execute(
+        calls=deployment_call,
+        max_fee=int(0.1 * 10**18),
+    )
+    await devnet_client.wait_for_tx(exec_txn.transaction_hash)
+
+    exec = await devnet_account.execute(
+        Call(
+            to_addr=utils_v2.STRK_ADDRESS if is_v3 else ETH_TOKEN_ADDRESS,
+            selector=get_selector_from_name("transfer"),
+            calldata=[
+                expected_address,
+                105 * 10**18,
+                0,
+            ],
+        ),
+        max_fee=int(0.1 * 10**18),
+    )
+    await devnet_client.wait_for_tx(exec.transaction_hash)
+
+    deployed_account = Account(
+        client=devnet_client,
+        address=expected_address,
+        key_pair=KeyPair.from_private_key(stark_privk),
+        chain=StarknetChainId.TESTNET,
+    )
+
+    # the account is in a hanging state - the ctor was called and the account exists on chain
+    # but the initializer was not called by the malicious factory
+    deployed_account_chash = await devnet_client.get_class_hash_at(
+        deployed_account.address)
+    assert deployed_account_chash == base_account_chash, "wrong account chash between ctor and init"
+
+    secp_signer = None if secp256r1_keypair is None else (
+        create_webauthn_signer(secp256r1_keypair[0])
+        if is_webauthn else create_secp256r1_signer(secp256r1_keypair[0]))
+    account_signer = deployed_account.signer if secp_signer is None else (
+        secp_signer if multisig_threshold == 0 else create_multisig_signer(
+            stark_signer, secp_signer))
+    balanceof_call = Call(
+        to_addr=int(FEE_CONTRACT_ADDRESS, 16),
+        selector=get_selector_from_name('balanceOf'),
+        calldata=[deployed_account.address],
+    )
+    await assert_execute_fails_with_signer(
+        deployed_account,
+        balanceof_call,
+        account_signer,
+        'NOT_IMPLEMENTED',
+    )
+
+    init_account_call = Call(
+        to_addr=deployed_account.address,
+        selector=get_selector_from_name('initializer_from_factory'),
+        calldata=[
+            stark_pubk,
+            len(additional_depl_data), *additional_depl_data
+        ],
+    )
+    if init_from_3rd_party_account:
+        # to verify that the account is not bricked - another account will now initialize the account
+        await execute_calls(devnet_account,
+                            init_account_call,
+                            execute_v3=is_v3)
+    else:
+        # verifying that only a stark signature with size 2 is accepted at this stage
+        await assert_execute_fails_with_signer(
+            deployed_account,
+            init_account_call,
+            create_legacy_stark_signer_oversized_length(stark_privk),
+            'INVALID_TXN_SIG',
+        )
+        # to verify that the account is not bricked - we check that a call within
+        await execute_calls(deployed_account,
+                            init_account_call,
+                            execute_v3=is_v3)
+
+    deployed_account_chash = await devnet_client.get_class_hash_at(
+        deployed_account.address)
+    assert deployed_account_chash == account_chash, "wrong account chash after init"
+
+    deployed_account.signer = account_signer
+    await execute_calls(deployed_account, balanceof_call, execute_v3=is_v3)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     [
@@ -317,7 +585,7 @@ async def test_upgrade(
         )
         migrated_storage = await devnet_client.get_storage_at(
             account.address, get_selector_from_name("storage_migration_ver"))
-        assert migrated_storage == int.from_bytes(b'001.000.000', 'big')
+        assert migrated_storage == int.from_bytes(b'001.001.000', 'big')
     else:
         with pytest.raises(Exception):
             await account.execute(

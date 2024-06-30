@@ -369,7 +369,7 @@ async def declare(devnet_client: FullNodeClient, devnet_account: Account,
     declare_signed_txn = await devnet_account.sign_declare_v2_transaction(
         compiled_contract=sierra_str,
         compiled_class_hash=chash,
-        max_fee=int(0.1 * 10**18),
+        max_fee=int(10**18),
     )
     account_decl = await devnet_client.declare(declare_signed_txn)
     await devnet_client.wait_for_tx(account_decl.transaction_hash)

@@ -1,11 +1,11 @@
-# Braavos Account Contract v1.0.0
+# Braavos Account Contract v1.1.0
 
 For the Braavos Multi Owner Account (MOA) please refer to [README_MOA.md](./README_MOA.md)
 
 #### Class Hashes
-*Braavos Account* - `0x00816dd0297efc55dc1e7559020a3a825e81ef734b558f03c83325d4da7e6253`
+*Braavos Account* - `0x0490f94ad4baeb8bb447007aa96ca7f2203500e4eb3255d82e47f23b1b9aaf6d`
 
-*Braavos Base Account* - `0x013bfe114fb1cf405bfc3a7f8dbe2d91db146c17521d40dcf57e16d6b59fa8e6`
+*Braavos Base Account* - `0x05b054b2ce377e9b07cd26be44638511bc43d2c0c2b263a078d836f92d22a9c1`
 
 ## Architecture
 
@@ -15,11 +15,23 @@ Braavos account deployment enables account addresses to be dependent only on the
 account implementation class hash. This is achieved by:
 
 1. Having a base implementation class hash that rarely changes (`src/presets/braavos_base_account.cairo`). Account deployments should always use this class hash.
-2. Send additional initialization parameters via the deployment signature instead of constructor params.
-3. Additional initialization parameters are signed and verified in the base implementation (see `assert_valid_deploy_base`).
+2. Send additional initialization parameters in a way that does not affect account address. See below for further details. 
+3. Additional initialization parameters are signed and verified in the base implementation (see `_assert_valid_deploy_params`).
 4. After validation, the base implementation replaces the underlying implementation to the latest one via a `replace_class_syscall` (`src/presets/braavos_account.cairo`) and the actual implementation initializer is called.
 
-NOTE: The actual account implementation is not expected to be directly deployed and therefore its constructor panics.
+#### Deployment with ACCOUNT_DEPLOY transaction / generic deploy syscall
+When using an ```ACCOUNT_DEPLOY``` transaction or a generic ```deploy``` syscall (e.g. UDC) the additional deployment parameters are sent via the signature.
+Since validation and initialization for these types of deployments happen in the CTOR, the account is guaranteed to be initialized with the relevant parameters atomically.
+Furthermore, since the additional parameters are sent in the signature and not in CTOR parameters, they do not affect the account address.
+
+#### Deployment from Account Factory
+When using the Braavos Account Factory, no special signature scheme is required. The factory guarantees atomic initialization in this case.
+More specifically, the factory calls the CTOR with the Stark key as usual, but then in the same transaction calls ```initializer_from_factory``` which initializes the account.
+There are 2 implementations of ```initializer_from_factory```:
+1. In the base implementation, the implementation is generic and only responsible for validating the parameters and forwarding them to the account implementation
+2. In the account implementation, the additional parameters are deserialized according to what that specific account implementation supports.
+Same as before, since the additional parameters are not sent as CTOR parameters, they do not affect the address.
+
 
 ### Signers (`src/signers/`)
 

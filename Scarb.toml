@@ -1,6 +1,6 @@
 [package]
 name = "braavos_account"
-version = "1.0.0"
+version = "1.0.1"
 
 [dependencies]
 starknet = ">=2.5.1"

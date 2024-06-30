@@ -232,7 +232,7 @@ async def test_deferred_remove_secp256r1_signer(
     # Now expire
     requests.post(f"{devnet_url}/increase_time",
                   timeout=1000,
-                  json={"time": 12 * 60 * 60 + 1})
+                  json={"time": 13 * 60 * 60 + 1})
 
     # Stark should work
     account.signer = stark_signer

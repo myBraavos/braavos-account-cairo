@@ -1,6 +1,8 @@
 import asyncio
 from collections import namedtuple
+from contextlib import contextmanager
 import os
+from pathlib import Path
 import pytest
 import pytest_asyncio
 import time
@@ -26,6 +28,14 @@ from starknet_py.net.models.transaction import DeployAccount
 from starknet_py.contract import Contract
 from starknet_py.net.udc_deployer.deployer import Deployer
 from starknet_py.hash.transaction import TransactionHashPrefix
+
+
+@contextmanager
+def none_context():
+    try:
+        yield None
+    finally:
+        pass
 
 
 @pytest.fixture(scope="module")
@@ -114,20 +124,30 @@ def declare_deploy_v1():
 
     async def _declare_deploy_v1(compiled_contract_path,
                                  devnet_account,
-                                 salt=0):
-        with open(compiled_contract_path, mode="r",
-                  encoding="utf8") as compiled_contract:
-            declare_result = await Contract.declare(
-                account=devnet_account,
-                compiled_contract=compiled_contract.read(),
-                max_fee=int(1e16),
-            )
-            await devnet_account.client.wait_for_tx(declare_result.hash)
-            deploy_result = await declare_result.deploy(max_fee=int(1e16),
-                                                        constructor_args=[],
-                                                        salt=salt)
-            await devnet_account.client.wait_for_tx(deploy_result.hash)
-            return deploy_result.deployed_contract
+                                 compiled_contract_casm_path=None,
+                                 salt=0,
+                                 unique=False):
+
+        compiled_contract = Path(compiled_contract_path).read_text()
+        if compiled_contract_casm_path:
+            compiled_contract_casm = Path(
+                compiled_contract_casm_path).read_text()
+        else:
+            compiled_contract_casm = None
+
+        declare_result = await Contract.declare(
+            account=devnet_account,
+            compiled_contract=compiled_contract,
+            compiled_contract_casm=compiled_contract_casm,
+            max_fee=int(1e17),
+        )
+        await devnet_account.client.wait_for_tx(declare_result.hash)
+        deploy_result = await declare_result.deploy(max_fee=int(1e16),
+                                                    constructor_args=[],
+                                                    unique=unique,
+                                                    salt=salt)
+        await devnet_account.client.wait_for_tx(deploy_result.hash)
+        return deploy_result.deployed_contract
 
     return _declare_deploy_v1
 
@@ -362,6 +382,47 @@ def generate_token(init_starknet, declare_deploy_v1):
         return res
 
     return _generate_token
+
+
+@pytest_asyncio.fixture(scope="module")
+async def init_account_factory(init_starknet, account_declare):
+    devnet_url, devnet_client, devnet_account = init_starknet
+    _, base_account_chash, _, _ = account_declare
+
+    account_factory_chash = await declare_v2(
+        devnet_client,
+        devnet_account,
+        "e2e/contracts/braavos_account_factory.sierra.json",
+        "e2e/contracts/braavos_account_factory.casm.json",
+    )
+
+    deployment = Deployer().create_contract_deployment(
+        class_hash=account_factory_chash,
+        salt=0,
+        cairo_version=1,
+    )
+    exec = await devnet_account.execute(deployment.call, auto_estimate=True)
+    await devnet_client.wait_for_tx(exec.transaction_hash)
+
+    factory_init_txn = await devnet_account.execute(
+        Call(
+            to_addr=deployment.address,
+            selector=get_selector_from_name('initializer'),
+            calldata=[devnet_account.address, base_account_chash],
+        ),
+        auto_estimate=True,
+    )
+    await devnet_client.wait_for_tx(factory_init_txn.transaction_hash)
+
+    # this factory impl is identical to the regular one, but does not call initialize after ctor
+    malicious_factory_chash = await declare_v2(
+        devnet_client,
+        devnet_account,
+        "e2e/contracts/braavos_account_factory_malicious.contract_class.json",
+        "e2e/contracts/braavos_account_factory_malicious.compiled_contract_class.json",
+    )
+
+    return deployment.address, malicious_factory_chash
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -699,7 +760,11 @@ async def account_deployer(
                 class_hash=base_account_chash,
                 contract_address_salt=stark_pubk,
                 constructor_calldata=ctor_calldata,
-                auto_estimate=True,
+                l1_resource_bounds=ResourceBounds(
+                    max_amount=10**8,
+                    max_price_per_unit=10**11,
+                ),
+                # auto_estimate=True,
             )
         else:
             signed_account_depl = await deployer_account.sign_deploy_account_v1_transaction(

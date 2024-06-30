@@ -305,6 +305,7 @@ async def test_add_external_signers(prepare_simple_signer):
     res = await signer.account.functions["get_multisig_threshold"].call()
     assert res[0] == 2, "wrong threshold"
 
+
 @pytest.mark.asyncio
 async def test_declare_disabled(init_starknet, prepare_simple_signer):
     signer: TestSigner = prepare_simple_signer
@@ -312,9 +313,11 @@ async def test_declare_disabled(init_starknet, prepare_simple_signer):
     sierra_str, casm_str = get_contract_str(
         "target/dev/braavos_account_BraavosBaseAccount")
 
-    with pytest.raises(ClientError, match=encode_string_as_hex("NOT_IMPLEMENTED")):
+    with pytest.raises(ClientError,
+                       match=encode_string_as_hex("NOT_IMPLEMENTED")):
         await utils_v2.declare(devnet_client, signer.get_account(0),
-                                sierra_str, casm_str)
+                               sierra_str, casm_str)
+
 
 @pytest.mark.asyncio
 async def test_add_same_external_signers_in_one_tx(prepare_simple_signer):
@@ -700,8 +703,8 @@ async def test_account_with_50_signers_sign_in_2_tx_partial(prepare_signer):
     ],
     [
         [
-            "./e2e/contracts/upgrade_test.sierra.json",
-            "./e2e/contracts/upgrade_test.casm.json",
+            "./e2e/contracts/upgrade_test_moa.sierra.json",
+            "./e2e/contracts/upgrade_test_moa.casm.json",
             True,
         ],
         [

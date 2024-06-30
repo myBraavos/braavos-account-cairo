@@ -1,4 +1,4 @@
-const ACCOUNT_VERSION: felt252 = '001.000.000';
+const ACCOUNT_VERSION: felt252 = '001.001.000';
 
 /// # BraavosAccount preset
 ///
@@ -6,13 +6,14 @@ const ACCOUNT_VERSION: felt252 = '001.000.000';
 /// hardware signers, webauthn, multisig, daily withdrawal limits and more.
 #[starknet::contract(account)]
 mod BraavosAccount {
-    use braavos_account::account::interface::IBraavosAccountInternal;
     use array::{ArrayTrait, SpanTrait};
     use box::BoxTrait;
     use option::{Option, OptionTrait};
     use serde::Serde;
     use starknet::info::v2::ExecutionInfo;
-    use starknet::{ClassHash, get_contract_address, get_tx_info, SyscallResultTrait};
+    use starknet::{
+        ClassHash, get_caller_address, get_contract_address, get_tx_info, SyscallResultTrait, TxInfo
+    };
     use starknet::syscalls::get_execution_info_v2_syscall;
     use starknet::account::Call;
     use traits::{Into, TryInto};
@@ -41,6 +42,7 @@ mod BraavosAccount {
     mod Errors {
         const ALREADY_INITIALIZED: felt252 = 'ALREADY_INITIALIZED';
         const INVALID_ENTRYPOINT: felt252 = 'INVALID_ENTRYPOINT';
+        const INVALID_INITIALIZATION: felt252 = 'INVALID_INITIALIZATION';
         const INVALID_SIG: felt252 = 'INVALID_SIG';
         const INVALID_SIGNER: felt252 = 'INVALID_SIGNER';
         const INVALID_SIGNER_TYPE: felt252 = 'INVALID_SIGNER_TYPE';
@@ -103,62 +105,11 @@ mod BraavosAccount {
 
     /// ProcessedDeploymentSignature represents a parsed deployment signature
     /// @param signature - stark signed sig
-    /// @param account_implementation - chash of the account we're deploying
-    /// @param signer_type - type of strong signer which can be added during init
-    /// @param secp256r1_signer - pub key of the strong signer
-    /// @param multisig_threshold - requested multisig threshold
-    /// @param withdrawal_limit_low
-    /// If hte given transaction turns out not to be a legitmate dwl
-    /// If hte given transaction turns out not to be a legitmate dwl
-    /// @param fee_rate - if dwl limit is set, eth fee rate must be attached
-    /// @param stark_fee_rate - if dwl limit is set, stark fee rate must be attached
-    #[derive(Copy, Drop)]
+    /// @param deployment_params - see AdditionalDeploymentParams doc in account interface
+    #[derive(Copy, Drop, Serde)]
     struct ProcessedDeploymentSignature {
-        signature: (@felt252, @felt252),
-        account_implementation: ClassHash,
-        signer_type: usize,
-        secp256r1_signer: Secp256r1PubKey,
-        multisig_threshold: usize,
-        withdrawal_limit_low: u128,
-        fee_rate: u128,
-        stark_fee_rate: u128,
-    }
-
-    impl ProcessedDeploymentSigSerde of Serde<ProcessedDeploymentSignature> {
-        fn serialize(self: @ProcessedDeploymentSignature, ref output: Array<felt252>) {
-            panic_with_felt252('NOT_IMPLEMENTED');
-        }
-
-        fn deserialize(ref serialized: Span<felt252>) -> Option<ProcessedDeploymentSignature> {
-            let signer_type = (*serialized.at(3)).try_into().unwrap();
-            assert(
-                signer_type == EMPTY_SIGNER_TYPE
-                    || signer_type == SECP256R1_SIGNER_TYPE
-                    || signer_type == WEBAUTHN_SIGNER_TYPE,
-                Errors::INVALID_SIGNER_TYPE
-            );
-            Option::Some(
-                ProcessedDeploymentSignature {
-                    signature: (serialized.at(0), serialized.at(1)),
-                    account_implementation: (*serialized.at(2)).try_into().unwrap(),
-                    signer_type: signer_type.try_into().unwrap(),
-                    secp256r1_signer: Secp256r1PubKey {
-                        pub_x: u256 {
-                            low: (*serialized.at(4)).try_into().unwrap(),
-                            high: (*serialized.at(5)).try_into().unwrap()
-                        },
-                        pub_y: u256 {
-                            low: (*serialized.at(6)).try_into().unwrap(),
-                            high: (*serialized.at(7)).try_into().unwrap()
-                        },
-                    },
-                    multisig_threshold: (*serialized.at(8)).try_into().unwrap(),
-                    withdrawal_limit_low: (*serialized.at(9)).try_into().unwrap(),
-                    fee_rate: (*serialized.at(10)).try_into().unwrap(),
-                    stark_fee_rate: (*serialized.at(11)).try_into().unwrap(),
-                }
-            )
-        }
+        txn_signature: (felt252, felt252),
+        deployment_params: interface::AdditionalDeploymentParams,
     }
 
     /// ProcessedSignature - represents a parsed transaction signature.
@@ -458,6 +409,58 @@ mod BraavosAccount {
         return etd_selector;
     }
 
+    /// Common initalization logic for both standard and factory initializers
+    /// Safe since it avoids reentrance by asserting that Stark key is not initialized
+    fn _initializer_common_safe(
+        ref self: ContractState,
+        stark_pub_key: StarkPubKey,
+        depl_params: interface::AdditionalDeploymentParams,
+        tx_info: TxInfo
+    ) {
+        assert(get_first_signer(SignerType::Stark) == 0, Errors::ALREADY_INITIALIZED);
+        assert(stark_pub_key.pub_key.is_zero() == false, Errors::INVALID_SIGNER);
+        self.signers._add_stark_signer_unsafe(stark_pub_key);
+        let mut num_signers = 1;
+        assert(depl_params.chain_id == tx_info.chain_id, Errors::INVALID_INITIALIZATION);
+        assert(
+            depl_params.signer_type == SignerType::Empty
+                || depl_params.signer_type == SignerType::Webauthn
+                || depl_params.signer_type == SignerType::Secp256r1,
+            Errors::INVALID_INITIALIZATION
+        );
+        if (depl_params.signer_type != SignerType::Empty) {
+            assert(
+                Secp256r1SignerMethodsTrait::assert_valid_point(@depl_params.secp256r1_signer),
+                Errors::INVALID_SIGNER
+            );
+
+            self
+                .signers
+                ._add_secp256r1_signer_unsafe(
+                    depl_params.secp256r1_signer, depl_params.signer_type,
+                );
+
+            num_signers += 1;
+        }
+
+        if (depl_params.multisig_threshold != 0) {
+            self
+                .multisig
+                ._set_multisig_threshold_inner(depl_params.multisig_threshold, num_signers);
+        }
+
+        if (depl_params.withdrawal_limit_low != 0) {
+            self
+                .dwl
+                ._set_withdrawal_limit_low_inner(
+                    depl_params.withdrawal_limit_low,
+                    depl_params.fee_rate,
+                    depl_params.stark_fee_rate,
+                    any_strong_signer()
+                );
+        }
+    }
+
     #[abi(embed_v0)]
     impl ExternalGetVersionImpl of interface::IGetVersion<ContractState> {
         /// get_version returns the current version of the account
@@ -474,52 +477,28 @@ mod BraavosAccount {
         /// initialization. Parsing this signature is done in ProcessedDeploymentSigSerde.
         /// After parsing the signature the various components are being called with the input.
         fn initializer(ref self: ContractState, stark_pub_key: StarkPubKey) {
-            assert(get_first_signer(SignerType::Stark) == 0, Errors::ALREADY_INITIALIZED);
-            assert(stark_pub_key.pub_key.is_zero() == false, Errors::INVALID_SIGNER);
             let tx_info = get_tx_info().unbox();
             let mut signature = tx_info.signature;
-            let processed_depl_sig = ProcessedDeploymentSigSerde::deserialize(ref signature)
-                .unwrap();
-            let mut num_signers = 1;
-            self.signers._add_stark_signer_unsafe(stark_pub_key);
-            if (processed_depl_sig.signer_type.into() != EMPTY_SIGNER_TYPE) {
-                assert(
-                    Secp256r1SignerMethodsTrait::assert_valid_point(
-                        @processed_depl_sig.secp256r1_signer
-                    ),
-                    Errors::INVALID_SIGNER
-                );
+            let processed_depl_sig = Serde::<
+                ProcessedDeploymentSignature
+            >::deserialize(ref signature)
+                .expect(Errors::INVALID_INITIALIZATION);
 
-                self
-                    .signers
-                    ._add_secp256r1_signer_unsafe(
-                        processed_depl_sig.secp256r1_signer,
-                        Into::<u32, felt252>::into(processed_depl_sig.signer_type)
-                            .try_into()
-                            .unwrap(),
-                    );
+            _initializer_common_safe(
+                ref self, stark_pub_key, processed_depl_sig.deployment_params, tx_info
+            );
+        }
 
-                num_signers += 1;
-            }
-
-            if (processed_depl_sig.multisig_threshold != 0) {
-                self
-                    .multisig
-                    ._set_multisig_threshold_inner(
-                        processed_depl_sig.multisig_threshold, num_signers
-                    );
-            }
-
-            if (processed_depl_sig.withdrawal_limit_low != 0) {
-                self
-                    .dwl
-                    ._set_withdrawal_limit_low_inner(
-                        processed_depl_sig.withdrawal_limit_low,
-                        processed_depl_sig.fee_rate,
-                        processed_depl_sig.stark_fee_rate,
-                        any_strong_signer()
-                    );
-            }
+        /// This function initializes the account when deployed from the Braavos Account Factory
+        /// @param stark_pub_key - This account's stark signer public key
+        /// @param deployment_params - Additional parameters to initialize the account on top of CTOR initialization
+        fn initializer_from_factory(
+            ref self: ContractState,
+            stark_pub_key: StarkPubKey,
+            deployment_params: interface::AdditionalDeploymentParams
+        ) {
+            let tx_info = get_tx_info().unbox();
+            _initializer_common_safe(ref self, stark_pub_key, deployment_params, tx_info);
         }
 
         /// Starknet account standard execute function. This function iterates over the given

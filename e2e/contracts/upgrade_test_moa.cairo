@@ -6,13 +6,13 @@ use starknet::ClassHash;
 
 
 #[starknet::interface]
-trait IUpgradeTarget<T> {
+trait IUpgradeTargetMoa<T> {
     fn supports_interface(self: @T, interface_id: felt252) -> bool;
     fn migrate_storage(ref self: T, from_version: felt252);
 }
 
 #[starknet::contract]
-mod UpgradeTarget {
+mod UpgradeTargetMoa {
     use super::{ArrayTrait, Call, ClassHash, SpanTrait, IUpgradeTarget};
     use box::BoxTrait;
     use option::OptionTrait;
@@ -31,7 +31,7 @@ mod UpgradeTarget {
 
 
     #[external(v0)]
-    impl ExternalMethods of IUpgradeTarget<ContractState> {
+    impl ExternalMethods of IUpgradeTargetMoa<ContractState> {
         fn supports_interface(self: @ContractState, interface_id: felt252) -> bool {
             assert(
                 interface_id == SRC6_ID || interface_id == ISTORAGE_MIGRATION_ID,
@@ -41,7 +41,7 @@ mod UpgradeTarget {
         }
 
         fn migrate_storage(ref self: ContractState, from_version: felt252) {
-            assert('001.001.000' == from_version, 'INCORRECT_VERSION');
+            assert('001.000.000' == from_version, 'INCORRECT_VERSION');
             self.storage_migration_ver.write(from_version);
         }
     }

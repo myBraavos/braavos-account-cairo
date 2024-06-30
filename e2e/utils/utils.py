@@ -114,6 +114,23 @@ def create_legacy_stark_signer(stark_privk: int, mock_est_fee=False):
                       ["sign_transaction"])(lambda txn: sign_txn(txn))
 
 
+def create_legacy_stark_signer_oversized_length(stark_privk: int,
+                                                mock_est_fee=False):
+    legacy_stark_signer = create_legacy_stark_signer(stark_privk=stark_privk,
+                                                     mock_est_fee=mock_est_fee)
+
+    def sign_txn(txn: AccountTransaction):
+        legacy_star_signer_result = legacy_stark_signer.sign_transaction(txn)
+        extra_padding = [0] * 100
+        res = [*legacy_star_signer_result, *extra_padding]
+
+        print('xxx', res)
+        return res
+
+    return namedtuple("StarkSigner",
+                      ["sign_transaction"])(lambda txn: sign_txn(txn))
+
+
 def generate_secp256r1_keypair():
     ecc_key = ec.generate_private_key(ec.SECP256R1())
     pk_x_uint256 = to_uint256(ecc_key.public_key().public_numbers().x)
