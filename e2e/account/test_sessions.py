@@ -842,7 +842,6 @@ async def test_session_execution_with_invalid_call(
         else:
             oe_call[1].selector = get_selector_from_name('increase_allowance')
 
-        print('xxx', is_gas_sponsored_execution)
         tx = await execute_session_call(oe_call)
         await devnet_client.wait_for_tx(tx.transaction_hash)
 

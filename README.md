@@ -126,9 +126,3 @@ Prerequisites:
 To run tests:
 >
 > pytest
-
-## Acknowledgements
-- This project utilizes 2 separate implementations of SHA256 for pre/post regenesis support:
-    - Cairo 0 implementation (as a library call) by the Cartridge team: [cairo-sha256](https://github.com/cartridge-gg/cairo-sha256)
-    - Cairo implementation from the [Alexandria](https://github.com/keep-starknet-strange/alexandria) project
-

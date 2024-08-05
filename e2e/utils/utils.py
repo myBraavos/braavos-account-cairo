@@ -282,11 +282,22 @@ def sign_hash_webauthn(hash,
     cdata_u32s = u8s_to_u32s_padded([b for b in client_data_bytes])
     adata_u32s = u8s_to_u32s_padded([b for b in auth_data_bytes])
     ret = [
-        WEBAUTHN_SIGNER_TYPE, *pk_x_uint256, *pk_y_uint256,
-        len(adata_u32s[0]), *adata_u32s[0], adata_u32s[1],
-        len(cdata_u32s[0]), *cdata_u32s[0], cdata_u32s[1], challenge_offset,
-        len(base64_challenge_ascii), base64_padding, *to_uint256(r),
-        *to_uint256(s), 1 if force_cairo_impl else 0
+        WEBAUTHN_SIGNER_TYPE,
+        *pk_x_uint256,
+        *pk_y_uint256,
+        len(adata_u32s[0]),
+        *adata_u32s[0],
+        adata_u32s[1],
+        len(cdata_u32s[0]),
+        *cdata_u32s[0],
+        cdata_u32s[1],
+        challenge_offset,
+        len(base64_challenge_ascii),
+        base64_padding,
+        *to_uint256(r),
+        *to_uint256(s),
+        # force cairo impl flag is deprecated and always 0 now
+        0
     ]
     return ret
 

@@ -50,10 +50,6 @@ impl StarkSignerMethods of StarkSignerMethodsTrait {
     }
 }
 
-const SHA256_CAIRO_0_LIB: felt252 =
-    0x4dacc042b398d6f385a87e7dd65d2bcb3270bb71c4b34857b3c658c7f52cf6d;
-const SHA256_CAIRO_0_SELECTOR: felt252 = selector!("sha256_cairo0");
-
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct Secp256r1PubKey {
     pub_x: u256,
@@ -105,7 +101,10 @@ impl Secp256r1SignerMethods of Secp256r1SignerMethodsTrait {
         offset += 1;
         let cdata_offset = offset + 1;
         let client_data_len = (*signature.at(offset)).try_into().unwrap();
-        let client_data = signature.slice(cdata_offset, client_data_len);
+        let client_data = signature.slice(cdata_offset, client_data_len - 1);
+        let client_data_last_word: u32 = (*signature.at(cdata_offset + client_data_len - 1))
+            .try_into()
+            .unwrap();
         offset += 1 + client_data_len;
         let client_data_u32s_padding: u32 = (*signature.at(offset)).try_into().unwrap();
         assert(client_data_u32s_padding < 4, 'INVALID_PADDING');
@@ -164,53 +163,22 @@ impl Secp256r1SignerMethods of Secp256r1SignerMethodsTrait {
 
         // Compute webauthn hash sha256(auth_data | sha256(client_data))
         let sig_rs = signature.slice(offset, 4);
-        let mut webauthn_hash: u256 = 0;
-        let mut force_cairo_impl: bool = signature.at(offset + 4) != @0;
-        if !force_cairo_impl {
-            let mut calldata: Array<felt252> = ArrayTrait::new();
-            client_data.serialize(ref calldata);
-            calldata.append((client_data.len() * 4 - client_data_u32s_padding).into());
-            let cairo0_cdata_sha256_res = library_call_syscall(
-                SHA256_CAIRO_0_LIB.try_into().unwrap(), SHA256_CAIRO_0_SELECTOR, calldata.span()
-            );
-            if cairo0_cdata_sha256_res.is_ok() {
-                let mut cairo0_cdata_sha256 = cairo0_cdata_sha256_res.unwrap();
-                cairo0_cdata_sha256.pop_front().expect('MISSING_LEN'); // first elem is len
-                let auth_data_cdata_concat = concat_u32_with_padding(
-                    auth_data, ref cairo0_cdata_sha256, auth_data_u32s_padding
-                );
-                calldata = array![];
-                auth_data_cdata_concat.serialize(ref calldata);
-                calldata.append((auth_data_cdata_concat.len() * 4 - auth_data_u32s_padding).into());
-                // sha256(authdata || sha256(cdata))
-                let cairo0_webauthn_hash = library_call_syscall(
-                    SHA256_CAIRO_0_LIB.try_into().unwrap(),
-                    SHA256_CAIRO_0_SELECTOR,
-                    calldata.span(),
-                )
-                    .unwrap();
+        let mut force_cairo_impl = signature.at(offset + 4);
+        assert(force_cairo_impl == @0, 'INVALID_DEPRECATED');
+        let mut cdata_u32s: Array<u32> = client_data.into_or_panic();
+        let mut cdata_hash = sha256_u32(
+            cdata_u32s, client_data_last_word, client_data_u32s_padding
+        );
 
-                webauthn_hash = cairo0_webauthn_hash
-                    .slice(1, cairo0_webauthn_hash.len() - 1)
-                    .into_or_panic();
-            } else {
-                force_cairo_impl = true;
-            }
-        }
-
-        // force_cairo_impl is either sent from client or is set due to Cairo 0 failure which
-        // can happen on regenesis or invalid input (that will fail on Cairo impl as well)
-        if force_cairo_impl {
-            let mut cdata_u32s: Array<u32> = client_data.into_or_panic();
-            let mut cdata_hash = sha256_u32(cdata_u32s, client_data_u32s_padding);
-
-            let auth_data_cdata_concat = concat_u32_with_padding(
-                auth_data, ref cdata_hash, auth_data_u32s_padding
-            );
-            webauthn_hash =
-                sha256_u32(auth_data_cdata_concat.span().into_or_panic(), auth_data_u32s_padding)
-                .into_or_panic();
-        }
+        let (auth_data_cdata_concat, auth_data_cdata_concat_last_word) = concat_u32_with_padding(
+            auth_data, ref cdata_hash, auth_data_u32s_padding
+        );
+        let webauthn_hash = sha256_u32(
+            auth_data_cdata_concat.span().into_or_panic(),
+            auth_data_cdata_concat_last_word,
+            auth_data_u32s_padding
+        )
+            .into_or_panic();
 
         // Verify sig matches webauthn hash
         let sig = Signature {

@@ -199,27 +199,26 @@ async def test_webauthn_chromium_examples(
                                 'big')).rstrip(b'=')
     base64_challenge_ascii = base64_challenge.decode('ascii')
     challenge_offset = client_data.find(base64_challenge)
-    for force_cairo_impl in [0, 1]:
-        adata_u32s = u8s_to_u32s_padded([b for b in auth_data])
-        cdata_u32s = u8s_to_u32s_padded([b for b in client_data])
-        contract_sig = [
-            WEBAUTHN_SIGNER_TYPE, *pk_x_uint256, *pk_y_uint256,
-            len(adata_u32s[0]), *adata_u32s[0], adata_u32s[1],
-            len(cdata_u32s[0]), *cdata_u32s[0], cdata_u32s[1],
-            challenge_offset,
-            len(base64_challenge_ascii), base64_padding, *to_uint256(sig[0]),
-            *to_uint256(sig[1]), force_cairo_impl
-        ]
+    force_cairo_impl = 0
+    adata_u32s = u8s_to_u32s_padded([b for b in auth_data])
+    cdata_u32s = u8s_to_u32s_padded([b for b in client_data])
+    contract_sig = [
+        WEBAUTHN_SIGNER_TYPE, *pk_x_uint256, *pk_y_uint256,
+        len(adata_u32s[0]), *adata_u32s[0], adata_u32s[1],
+        len(cdata_u32s[0]), *cdata_u32s[0], cdata_u32s[1], challenge_offset,
+        len(base64_challenge_ascii), base64_padding, *to_uint256(sig[0]),
+        *to_uint256(sig[1]), force_cairo_impl
+    ]
 
-        call_res = await devnet_client.call_contract(
-            Call(
-                to_addr=account.address,
-                selector=get_selector_from_name("is_valid_signature"),
-                calldata=[challenge_hash,
-                          len(contract_sig), *contract_sig],
-            ))
+    call_res = await devnet_client.call_contract(
+        Call(
+            to_addr=account.address,
+            selector=get_selector_from_name("is_valid_signature"),
+            calldata=[challenge_hash,
+                      len(contract_sig), *contract_sig],
+        ))
 
-        assert call_res[0] == int.from_bytes(b'VALID', 'big')
+    assert call_res[0] == int.from_bytes(b'VALID', 'big')
 
 
 @pytest.mark.asyncio

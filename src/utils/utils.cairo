@@ -122,7 +122,7 @@ fn mulDiv(a: u256, b: u256, c: u256) -> u256 {
 
 fn concat_u32_with_padding(
     first_span: Span<felt252>, ref second_span: Span<felt252>, padding: u32
-) -> Array<felt252> {
+) -> (Array<felt252>, u32) {
     let mut concat_data: Array<felt252> = array![];
     let mut i = 0;
     let first_len = first_span.len() - 1;
@@ -157,8 +157,7 @@ fn concat_u32_with_padding(
             Option::None => { break; },
         };
     };
-    concat_data.append(prev.into());
-    concat_data
+    (concat_data, prev)
 }
 
 fn u32_shr_div_for_pos(pos_in_u32: u32) -> u32 {

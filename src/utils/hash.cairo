@@ -1,53 +1,61 @@
-use braavos_account::sha256::sha256::{get_h, get_k, sha256_inner};
+use core::iter::IntoIterator;
+use core::sha256::{
+    compute_sha256_u32_array, sha256_state_handle_init, sha256_state_handle_digest,
+    SHA256_INITIAL_STATE, append_zeros
+};
+use starknet::syscalls::sha256_process_block_syscall;
+use starknet::SyscallResultTrait;
 
-fn sha256_u32(mut data: Array<u32>, padding: u32) -> Span<felt252> {
-    let data_len: u32 = (data.len() * 4 - padding) * 8;
+/// This function is based on the cairo core lib sha256 function compute_sha256_u32_array
+/// but has a modified `add_sha256_padded_input` to match our input format.
+fn sha256_u32(mut data: Array<u32>, last_word: u32, padding: u32) -> Span<felt252> {
+    add_sha256_padded_input(ref data, last_word, padding);
+    let mut state = sha256_state_handle_init(BoxTrait::new(SHA256_INITIAL_STATE));
 
-    // add one
-    if (padding == 0) {
+    let mut input = data.span();
+    while let Option::Some(chunk) = input.multi_pop_front() {
+        state = sha256_process_block_syscall(state, *chunk).unwrap_syscall();
+    };
+    let [res1, res2, res3, res4, res5, res6, res7, res8] = sha256_state_handle_digest(state)
+        .unbox();
+    array![
+        res1.into(),
+        res2.into(),
+        res3.into(),
+        res4.into(),
+        res5.into(),
+        res6.into(),
+        res7.into(),
+        res8.into()
+    ]
+        .span()
+}
+
+/// This function has the same purpose as core::sha256::panic_with_felt252 but 
+/// is optimized to our input format. The padding is defined as follows:
+/// 1. Append a single bit with value 1 to the end of the array.
+/// 2. Append zeros until the length of the array is 448 mod 512.
+/// 3. Append the length of the array in bits as a 64-bit number.
+fn add_sha256_padded_input(ref data: Array<u32>, last_word: u32, padding: u32) {
+    let input_len = data.len() + 1;
+    if padding == 0 {
+        data.append(last_word);
         data.append(0x80000000);
     } else {
-        let copy_len = data.len() - 1;
-        let last = *data.at(copy_len);
-        let mut data_tmp = array![];
-        let mut i = 0;
-        loop {
-            if (i >= copy_len) {
-                break;
-            }
-            data_tmp.append(*data.at(i));
-            i += 1;
+        let pad = if padding == 1 {
+            0x80
+        } else if padding == 2 {
+            0x8000
+        } else if padding == 3 {
+            0x800000
+        } else {
+            panic_with_felt252('ILLEGAL_PADDING');
+            0
         };
-        if (padding == 3) {
-            data_tmp.append(last | 0x800000);
-        } else if (padding == 2) {
-            data_tmp.append(last | 0x8000);
-        } else if (padding == 1) {
-            data_tmp.append(last | 0x80);
-        }
-        data = data_tmp;
+        data.append(last_word + pad);
     }
-    // add padding
-    loop {
-        if (16 * ((data.len() - 1) / 16 + 1)) - 1 == data.len() {
-            break;
-        }
-        data.append(0);
-    };
 
-    // add length to the end
-    data.append(data_len);
-
-    let h = get_h();
-    let k = get_k();
-    let mut res = sha256_inner(data.span(), 0, k.span(), h.span());
-
-    let mut arr: Array<felt252> = array![];
-    loop {
-        match res.pop_front() {
-            Option::Some(elem) => { arr.append((*elem).into()); },
-            Option::None => { break; },
-        };
-    };
-    arr.span()
+    let mut remaining: felt252 = 16 - ((data.len() + 1) % 16).into();
+    append_zeros(ref data, remaining);
+    data.append(input_len * 32 - padding * 8);
 }

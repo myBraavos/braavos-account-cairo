@@ -68,7 +68,7 @@ async def test_deferred_remove_secp256r1_signer(
     secp256r1_pubk = flatten_seq(secp256r1_keypair[1])
     signer_type = WEBAUTHN_SIGNER_TYPE if is_webauthn else SECP256R1_SIGNER_TYPE
 
-    requests.post(f"{devnet_url}/set_time", json={"time": time.time()})
+    requests.post(f"{devnet_url}/set_time", json={"time": int(time.time())})
 
     account_etd = 24 * 4 * 60 * 60
     if custom_etd is not None:
@@ -321,7 +321,7 @@ async def test_deferred_remove_all_signers(init_starknet, account_deployer,
             await account.execute_v1(calls=deferred_remove_call,
                                      auto_estimate=True)
 
-    requests.post(f"{devnet_url}/set_time", json={"time": time.time()})
+    requests.post(f"{devnet_url}/set_time", json={"time": int(time.time())})
 
     add_secp256r1_call = Call(
         to_addr=account.address,
@@ -504,7 +504,7 @@ async def test_cancel_deferred_remove_secp256r1_signer(
     legacy_stark_signer = create_legacy_stark_signer(stark_privk)
     signer_type = WEBAUTHN_SIGNER_TYPE if is_webauthn else SECP256R1_SIGNER_TYPE
 
-    requests.post(f"{devnet_url}/set_time", json={"time": time.time()})
+    requests.post(f"{devnet_url}/set_time", json={"time": int(time.time())})
 
     account, _ = await account_deployer(stark_privk, None, 0)
     account: Account
