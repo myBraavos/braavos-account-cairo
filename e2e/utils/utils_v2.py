@@ -1,5 +1,4 @@
 import e2e.utils.utils as utils_v1
-from e2e.utils.typed_data import TypedDataR1
 
 import time
 import requests
@@ -7,14 +6,13 @@ from typing import Dict, List
 from pathlib import Path
 from collections import namedtuple
 from poseidon_py.poseidon_hash import poseidon_hash_many
+import dataclasses
 
-from starknet_py.constants import FEE_CONTRACT_ADDRESS
+from starknet_py.constants import FEE_CONTRACT_ADDRESS, QUERY_VERSION_BASE
 from starknet_py.hash.selector import get_selector_from_name
 from starknet_py.net.account.account import (
     Account,
     KeyPair,
-    _execute_payload_serializer_v2,
-    _parse_calls_v2,
 )
 from starknet_py.hash.utils import message_signature
 from starknet_py.hash.casm_class_hash import compute_casm_class_hash
@@ -25,12 +23,15 @@ from starknet_py.net.models.chains import StarknetChainId
 from starknet_py.utils.iterable import ensure_iterable
 from starknet_py.contract import Contract
 from starknet_py.net.client_models import (Call, ResourceBounds)
-from starknet_py.net.schemas.gateway import (
+from starknet_py.net.schemas.rpc.contract import (
     CasmClassSchema,
     ContractClassSchema,
     SierraCompiledContractSchema,
 )
+from starknet_py.net.account.account import _parse_calls
 from starknet_py.net.full_node_client import FullNodeClient
+from e2e.utils.typed_data import get_typed_data
+from starknet_py.net.client_errors import ClientError
 
 
 class AccountDetails:
@@ -133,7 +134,7 @@ def load_test_contract(contract_name: str):
 
 
 async def transfer_eth(from_acc, to_acc, amount, client):
-    exec = await from_acc.execute(
+    exec = await from_acc.execute_v1(
         Call(
             to_addr=int(FEE_CONTRACT_ADDRESS, 16),
             selector=get_selector_from_name("transfer"),
@@ -149,7 +150,7 @@ async def transfer_eth(from_acc, to_acc, amount, client):
 
 
 async def transfer_strk(from_acc, to_acc, amount, client):
-    exec = await from_acc.execute(
+    exec = await from_acc.execute_v1(
         Call(
             to_addr=STRK_ADDRESS,
             selector=get_selector_from_name("transfer"),
@@ -178,7 +179,7 @@ class TestSigner:
                 address=account.address,
                 client=devnet_client,
                 key_pair=KeyPair.from_private_key(pk),
-                chain=StarknetChainId.TESTNET,
+                chain=utils_v1.DEVNET_CHAIN_ID,
             )
             self.signers.append(signer)
 
@@ -266,6 +267,9 @@ class TestSigner:
     ):
         invoke = await self.prepare_invoke(calls, nonce, 0, signer_ids, is_v3,
                                            l1_resource_bounds)
+        invoke = dataclasses.replace(invoke,
+                                     version=invoke.version +
+                                     QUERY_VERSION_BASE)
         return await self.client.estimate_fee(invoke)
 
     async def prepare_invoke(self,
@@ -366,7 +370,7 @@ async def declare(devnet_client: FullNodeClient, devnet_account: Account,
     chash = compute_casm_class_hash(CasmClassSchema().loads(casm_str))
     sierra_chash = compute_sierra_class_hash(
         SierraCompiledContractSchema().loads(sierra_str, unknown="exclude"))
-    declare_signed_txn = await devnet_account.sign_declare_v2_transaction(
+    declare_signed_txn = await devnet_account.sign_declare_v2(
         compiled_contract=sierra_str,
         compiled_class_hash=chash,
         max_fee=int(10**18),
@@ -378,15 +382,27 @@ async def declare(devnet_client: FullNodeClient, devnet_account: Account,
 
 async def declare_v0(devnet_client, devnet_account, contract_path):
     with open(contract_path, mode="r", encoding="utf8") as compiled_contract:
+
         compiled_contract_content = compiled_contract.read()
-        declare_tx = await devnet_account.sign_declare_v1_transaction(
-            compiled_contract=compiled_contract_content,
-            max_fee=int(0.1 * 10**18),
-        )
         cairo0_chash = compute_class_hash(ContractClassSchema().loads(
             compiled_contract_content, unknown="exclude"))
-        decl = await devnet_client.declare(transaction=declare_tx)
-        await devnet_client.wait_for_tx(decl.transaction_hash)
+
+        class_exists = True
+        try:
+            await devnet_account.client.get_class_by_hash(cairo0_chash)
+        except ClientError:
+            class_exists = False
+
+        if not class_exists:
+
+            declare_tx = await devnet_account.sign_declare_v1(
+                compiled_contract=compiled_contract_content,
+                max_fee=int(0.1 * 10**18),
+            )
+
+            decl = await devnet_client.declare(transaction=declare_tx)
+            await devnet_client.wait_for_tx(decl.transaction_hash)
+
         return cairo0_chash
 
 
@@ -423,8 +439,7 @@ def get_transfer_calls(account_addr,
 
 
 def serialize_calls(calls):
-    parsed_calls = _parse_calls_v2(ensure_iterable(calls))
-    return _execute_payload_serializer_v2.serialize({"calls": parsed_calls})
+    return _parse_calls(1, calls)
 
 
 def prepare_calldata(guid, nonce, calls):
@@ -495,7 +510,7 @@ def check_owner_removed_event(receipt, address, pubkey):
 
 async def deploy_external_account(devnet_account, signer_chash, signer_abi,
                                   pubk):
-    deploy_result = await Contract.deploy_contract(
+    deploy_result = await Contract.deploy_contract_v1(
         account=devnet_account,
         class_hash=signer_chash,
         abi=signer_abi,
@@ -518,8 +533,11 @@ def txn_stub(tx_hash: int):
 
 
 def calculate_preamble_hash(account_address, txn_hash, ext_sig):
-    typed_data = TypedDataR1(
+    typed_data = get_typed_data(
         {
+            "Moa Transaction Hash": txn_hash,
+            "External Signature": ext_sig,
+        }, {
             "MOASignaturePreambleHash": [
                 {
                     "name": "Moa Transaction Hash",
@@ -530,18 +548,20 @@ def calculate_preamble_hash(account_address, txn_hash, ext_sig):
                     "type": "felt*",
                 },
             ],
-        }, "MOA.signature_preamble_hash", "1")
-    message = {
-        "Moa Transaction Hash": txn_hash,
-        "External Signature": ext_sig,
-    }
-    return typed_data.get_hash(message, account_address,
-                               "MOASignaturePreambleHash")
+        }, "MOASignaturePreambleHash", "MOA.signature_preamble_hash", "1")
+
+    return typed_data.message_hash(account_address)
 
 
 def calculate_tx_hash(calls, account_address, guid, signers_len, nonce=0):
-    typed_data = TypedDataR1(
+    typed_data = get_typed_data(
         {
+            "Proposer Guid": guid,
+            "Nonce": nonce,
+            "Calls": utils_v1.parse_calls_for_typed_data(
+                ensure_iterable(calls)),
+            "Num Signers": signers_len,
+        }, {
             "MOATransaction": [
                 {
                     "name": "Proposer Guid",
@@ -574,14 +594,8 @@ def calculate_tx_hash(calls, account_address, guid, signers_len, nonce=0):
                     "type": "felt*"
                 },
             ],
-        }, "MOA.transaction_hash", "1")
-    message = {
-        "Proposer Guid": guid,
-        "Nonce": nonce,
-        "Calls": utils_v1.parse_calls_for_typed_data(ensure_iterable(calls)),
-        "Num Signers": signers_len,
-    }
-    return typed_data.get_hash(message, account_address, "MOATransaction")
+        }, "MOATransaction", "MOA.transaction_hash", "1")
+    return typed_data.message_hash(account_address)
 
 
 def get_max_resource_bounds(is_executing):

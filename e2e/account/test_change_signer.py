@@ -64,7 +64,7 @@ async def test_multiple_secp256r1_signers(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk1, secp256r1_type, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -85,7 +85,7 @@ async def test_multiple_secp256r1_signers(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk2, secp256r1_type, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -107,7 +107,7 @@ async def test_multiple_secp256r1_signers(
     elif multisig_threshold == 2:
         account.signer = multi_sig_signer1
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=balanceof_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -124,7 +124,7 @@ async def test_multiple_secp256r1_signers(
     elif multisig_threshold == 2:
         account.signer = multi_sig_signer2
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=balanceof_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -180,7 +180,7 @@ async def test_regenesis_upgrade(
         salt=stark_pubk,
         constructor_calldata=ctor_calldata,
     )
-    exec = await devnet_account.execute(
+    exec = await devnet_account.execute_v1(
         Call(
             to_addr=int(FEE_CONTRACT_ADDRESS, 16),
             selector=get_selector_from_name("transfer"),
@@ -204,7 +204,7 @@ async def test_regenesis_upgrade(
         address=account_address,
         signer=deploy_signer,
     )
-    signed_account_depl = await deployer_account.sign_deploy_account_v1_transaction(
+    signed_account_depl = await deployer_account.sign_deploy_account_v1(
         class_hash=proxy_cairo0_chash,
         contract_address_salt=stark_pubk,
         constructor_calldata=ctor_calldata,
@@ -218,7 +218,7 @@ async def test_regenesis_upgrade(
         client=devnet_client,
         address=account_address,
         signer=stark_signer,
-        chain=StarknetChainId.TESTNET,
+        chain=DEVNET_CHAIN_ID,
     )
     await account.cairo_version
     secp256r1_signer = create_secp256r1_signer(
@@ -292,7 +292,7 @@ async def test_regenesis_upgrade(
         client=devnet_client,
         address=account.address,
         key_pair=stark_keypair,
-        chain=StarknetChainId.TESTNET,
+        chain=DEVNET_CHAIN_ID,
     )
     await account.cairo_version
     # at this point we are already in new Account signature format so recreate signer helpers
@@ -380,7 +380,7 @@ async def test_multiple_secp256r1_signers_with_signer_change(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk1, secp256r1_type, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -401,7 +401,7 @@ async def test_multiple_secp256r1_signers_with_signer_change(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk2, secp256r1_type, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -436,7 +436,7 @@ async def test_multiple_secp256r1_signers_with_signer_change(
         ],
     )
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=change_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -475,7 +475,7 @@ async def test_multiple_secp256r1_signers_with_signer_change(
                                                secp256r1_signer1,
                                                'INVALID_SIG')
         account.signer = secp256r1_signer2
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             max_fee=int(0.1 * 10**18),
         )
@@ -485,7 +485,7 @@ async def test_multiple_secp256r1_signers_with_signer_change(
                                                multi_sig_signer1,
                                                'INVALID_SIG')
         account.signer = multi_sig_signer2
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             max_fee=int(0.1 * 10**18),
         )
@@ -497,7 +497,7 @@ async def test_multiple_secp256r1_signers_with_signer_change(
     elif multisig_threshold == 2:
         account.signer = new_multisig_signer
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=balanceof_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -575,7 +575,7 @@ async def test_multiple_hws_and_webauthn_signers_with_signer_change(
         calldata=[
             *webauthn_secp256r1_pubk2, WEBAUTHN_SIGNER_TYPE, multisig_threshold
         ])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=[
             add_secp256r1_call1, add_secp256r1_call2,
             add_webauthn_secp256r1_call1, add_webauthn_secp256r1_call2
@@ -677,7 +677,7 @@ async def test_multiple_hws_and_webauthn_signers_with_signer_change(
             poseidon_hash_many(webauthn_secp256r1_pubk1), WEBAUTHN_SIGNER_TYPE
         ])
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=[change_secp256r1_call, change_webauthn_secp256r1_call],
         max_fee=int(0.1 * 10**18),
     )
@@ -775,7 +775,7 @@ async def test_duplicate_signers_cause_error(
                                selector=get_selector_from_name("name"),
                                calldata=[])
 
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=[non_bypass_call],
             max_fee=int(0.1 * 10**18),
         )
@@ -796,7 +796,7 @@ async def test_duplicate_signers_cause_error(
                                selector=get_selector_from_name("name"),
                                calldata=[])
 
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=[non_bypass_call],
             max_fee=int(0.1 * 10**18),
         )

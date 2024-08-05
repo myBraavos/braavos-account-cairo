@@ -67,7 +67,7 @@ async def test_add_secp256r1_signer(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk, SECP256R1_SIGNER_TYPE, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -226,7 +226,7 @@ async def test_add_webauthn_signer(
         calldata=[
             *webauthn_secp256r1_pubk, WEBAUTHN_SIGNER_TYPE, multisig_threshold
         ])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_webauthn_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -399,7 +399,7 @@ async def test_remove_secp256r1_signer(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk, SECP256R1_SIGNER_TYPE, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -428,7 +428,7 @@ async def test_remove_secp256r1_signer(
     if withdrawal_limit_high > 0:
         await set_and_assert_high_threshold(withdrawal_limit_high, account)
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=remove_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -486,7 +486,7 @@ async def test_remove_secp256r1_signer(
         selector=get_selector_from_name('balanceOf'),
         calldata=[account.address],
     )
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=balanceof_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -495,7 +495,7 @@ async def test_remove_secp256r1_signer(
 
     if webauthn_secp256r1_signer is None:
         account.signer = create_legacy_stark_signer(stark_privk)
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             max_fee=int(0.1 * 10**18),
         )
@@ -550,7 +550,7 @@ async def test_remove_webauthn_signer(
         calldata=[
             *webauthn_secp256r1_pubk, WEBAUTHN_SIGNER_TYPE, multisig_threshold
         ])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_webauthn_secp256r1_keypair,
         max_fee=int(0.1 * 10**18),
     )
@@ -576,7 +576,7 @@ async def test_remove_webauthn_signer(
         ) if hws_secp256r1_signer is None else create_multisig_signer(
             hws_secp256r1_signer, webauthn_secp256r1_signer)
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=remove_webauthn_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -623,7 +623,7 @@ async def test_remove_webauthn_signer(
         selector=get_selector_from_name('balanceOf'),
         calldata=[account.address],
     )
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=balanceof_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -632,7 +632,7 @@ async def test_remove_webauthn_signer(
 
     if hws_secp256r1_signer is None:
         account.signer = create_legacy_stark_signer(stark_privk)
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             max_fee=int(0.1 * 10**18),
         )
@@ -672,7 +672,7 @@ async def test_change_secp256r1_signer(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk, SECP256R1_SIGNER_TYPE, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -688,7 +688,7 @@ async def test_change_secp256r1_signer(
                   poseidon_hash_many(secp256r1_pubk), SECP256R1_SIGNER_TYPE],
     )
     with pytest.raises(Exception):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=change_secp256r1_call,
             # max_fee=int(0.1 * 10**18),
             auto_estimate=True,
@@ -716,7 +716,7 @@ async def test_change_secp256r1_signer(
         account.signer = curr_secp256r1_signer
     elif multisig_threshold == 2:
         account.signer = curr_multisig_signer
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=change_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -765,7 +765,7 @@ async def test_change_secp256r1_signer(
                                                'INVALID_SIG')
         account.signer = new_multisig_signer
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=balanceof_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -806,7 +806,7 @@ async def test_change_weauthn_signer(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk, WEBAUTHN_SIGNER_TYPE, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_weauthn_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -825,7 +825,7 @@ async def test_change_weauthn_signer(
                   poseidon_hash_many(secp256r1_pubk), WEBAUTHN_SIGNER_TYPE],
     )
     with pytest.raises(Exception):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=change_weauthn_call,
             # max_fee=int(0.1 * 10**18),
             auto_estimate=True,
@@ -854,7 +854,7 @@ async def test_change_weauthn_signer(
     elif multisig_threshold == 2:
         account.signer = curr_multisig_signer
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=change_webauthn_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -903,7 +903,7 @@ async def test_change_weauthn_signer(
                                                'INVALID_SIG')
         account.signer = new_multisig_signer
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=balanceof_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -978,7 +978,7 @@ async def test_add_secp256r1_signer_m_of_n(
             selector=get_selector_from_name("add_secp256r1_signer"),
             calldata=[*secp256r1_pubk, signers_type, threshold],
         )
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=add_secp256r1_call,
             max_fee=10**17,
         )

@@ -29,8 +29,10 @@ from starknet_py.net.full_node_client import FullNodeClient
 from starknet_py.hash.selector import get_selector_from_name
 from starknet_py.hash.transaction import compute_deploy_account_transaction_hash
 from starknet_py.hash.utils import message_signature
-from starknet_py.net.schemas.gateway import CasmClassSchema
+from starknet_py.net.schemas.rpc.contract import CasmClassSchema
 from starknet_py.net.models.chains import StarknetChainId
+from starknet_py.common import int_from_bytes
+from starknet_py.utils.typed_data import (TypedData, TypeContext)
 
 STARK_SIGNER_TYPE = 1
 SECP256R1_SIGNER_TYPE = 2
@@ -44,6 +46,8 @@ REQUIRED_SIGNER_MULTISIG = 3
 ETHER = 10**18
 USDC = 10**6
 ETH_TOKEN_ADDRESS = 0x49D36570D4E46F48E99674BD3FCC84644DDD6B96F7C741B1562B82F9E004DC7
+
+DEVNET_CHAIN_ID = int_from_bytes(b"SN_SEPOLIA")
 
 
 def encode_string_as_hex(input: str):
@@ -66,6 +70,12 @@ def to_uint256(a):
     return (a & ((1 << 128) - 1), a >> 128)
 
 
+def to_uint256_dict(a):
+    """Takes in value, returns uint256-ish dict."""
+    uint256_tuple = to_uint256(a)
+    return {'low': uint256_tuple[0], 'high': uint256_tuple[1]}
+
+
 def break_into_Nbit_chunks(large_integer, chunk_bit_size):
     # Define the mask to extract n-bits.
     bin_str = bin(large_integer).lstrip("0b")
@@ -86,17 +96,36 @@ def sign_hash_stark(hash, stark_privk):
     return [STARK_SIGNER_TYPE, *message_signature(hash, stark_privk)]
 
 
+def create_signer(stark_privk: int, second_signer_type, secp_privk,
+                  multisig_threshold):
+    signer = create_stark_signer(stark_privk)
+    if not second_signer_type is None:
+        secp_signer = create_secp256r1_signer(
+            secp_privk
+        ) if second_signer_type == SECP256R1_SIGNER_TYPE else create_webauthn_signer(
+            secp_privk)
+        if multisig_threshold > 0:
+            signer = create_multisig_signer(secp_signer, signer)
+        else:
+            signer = secp_signer
+    return signer
+
+
 def create_stark_signer(stark_privk: int, mock_est_fee=False):
 
     def sign_txn(txn: AccountTransaction):
         if not mock_est_fee or txn.version < 2**128:
-            return sign_hash_stark(txn.calculate_hash(StarknetChainId.TESTNET),
+            return sign_hash_stark(txn.calculate_hash(DEVNET_CHAIN_ID),
                                    stark_privk)
         else:
             return [STARK_SIGNER_TYPE, 0, 0]
 
-    return namedtuple("StarkSigner",
-                      ["sign_transaction"])(lambda txn: sign_txn(txn))
+    def sign_typed_data(data: TypedData, address):
+        return sign_hash_stark(data.message_hash(address), stark_privk)
+
+    return namedtuple("StarkSigner", ["sign_transaction", "sign_message"])(
+        lambda txn: sign_txn(txn),
+        lambda data, address: sign_typed_data(data, address))
 
 
 def create_legacy_stark_signer(stark_privk: int, mock_est_fee=False):
@@ -104,7 +133,7 @@ def create_legacy_stark_signer(stark_privk: int, mock_est_fee=False):
     def sign_txn(txn: AccountTransaction):
         if not mock_est_fee or txn.version < 2**128:
             return message_signature(
-                txn.calculate_hash(StarknetChainId.TESTNET),
+                txn.calculate_hash(DEVNET_CHAIN_ID),
                 stark_privk,
             )
         else:
@@ -124,7 +153,6 @@ def create_legacy_stark_signer_oversized_length(stark_privk: int,
         extra_padding = [0] * 100
         res = [*legacy_star_signer_result, *extra_padding]
 
-        print('xxx', res)
         return res
 
     return namedtuple("StarkSigner",
@@ -173,11 +201,15 @@ def create_secp256r1_signer(ecc_key: ec.EllipticCurvePrivateKey,
                 *[0, 0],  # *to_uint256(r), *to_uint256(s)
             ]
 
-        txn_hash = txn.calculate_hash(StarknetChainId.TESTNET)
+        txn_hash = txn.calculate_hash(DEVNET_CHAIN_ID)
         return sign_hash_secp256r1(txn_hash, ecc_key, legacy)
 
-    return namedtuple('Secp256r1Signer',
-                      ['sign_transaction'])(lambda txn: sign_txn(txn))
+    def sign_typed_data(data: TypedData, address):
+        return sign_hash_secp256r1(data.message_hash(address), ecc_key)
+
+    return namedtuple('Secp256r1Signer', ['sign_transaction', 'sign_message'])(
+        lambda txn: sign_txn(txn),
+        lambda data, address: sign_typed_data(data, address))
 
 
 def u8s_to_u32s_padded(array_u8):
@@ -281,27 +313,36 @@ def create_webauthn_signer(ecc_key: ec.EllipticCurvePrivateKey,
                 0,  # *to_uint256(r), *to_uint256(s), 1 if force_cairo_impl else 0
             ]
 
-        txn_hash = txn.calculate_hash(StarknetChainId.TESTNET)
+        txn_hash = txn.calculate_hash(DEVNET_CHAIN_ID)
         return sign_hash_webauthn(txn_hash, ecc_key, force_cairo_impl)
 
-    return namedtuple(
-        'WebauthnSigner',
-        ['sign_transaction'
-         ])(lambda txn: sign_txn(txn, force_cairo_impl=force_cairo_impl))
+    def sign_typed_data(data: TypedData, address):
+        return sign_hash_webauthn(data.message_hash(address), ecc_key)
+
+    return namedtuple('WebauthnSigner', ['sign_transaction', 'sign_message'])(
+        lambda txn: sign_txn(txn, force_cairo_impl=force_cairo_impl),
+        lambda data, address: sign_typed_data(data, address))
 
 
 def create_multisig_signers(signers):
-    return namedtuple('MultisigSigner', [
-        'sign_transaction'
-    ])(lambda txn:
-       [item for signer in signers for item in signer.sign_transaction(txn)])
+    return namedtuple('MultisigSigner', ['sign_transaction', 'sign_message'])(
+        lambda txn:
+        [item for signer in signers
+         for item in signer.sign_transaction(txn)], lambda data, address: [
+             item for signer in signers
+             for item in signer.sign_typed_data(data, address)
+         ])
 
 
 def create_multisig_signer(signer_1, signer_2):
-    return namedtuple("MultisigSigner", ["sign_transaction"])(lambda txn: [
-        *signer_1.sign_transaction(txn),
-        *signer_2.sign_transaction(txn),
-    ])
+    return namedtuple("MultisigSigner",
+                      ["sign_transaction", 'sign_message'])(lambda txn: [
+                          *signer_1.sign_transaction(txn),
+                          *signer_2.sign_transaction(txn),
+                      ], lambda data, address: [
+                          *signer_1.sign_message(data, address), *signer_2.
+                          sign_message(data, address)
+                      ])
 
 
 def cairo0_deployment_signer(deploy_txn, account_address, stark_keypair,
@@ -314,7 +355,7 @@ def cairo0_deployment_signer(deploy_txn, account_address, stark_keypair,
         max_fee=deploy_txn.max_fee,
         nonce=deploy_txn.nonce,
         salt=stark_keypair.public_key,
-        chain_id=StarknetChainId.TESTNET,
+        chain_id=DEVNET_CHAIN_ID,
     )
     depl_hash = compute_hash_on_elements([
         deploy_txn_hash,
@@ -342,24 +383,36 @@ def txn_receipt_contains_event(
     return False
 
 
-async def assert_execute_fails_with_signer(account: Account, call: Call,
-                                           signer, expected_error):
+async def execute_with_signer(account: Account,
+                              call: Call,
+                              signer,
+                              is_v3=False,
+                              max_fee=10**17):
     prev_signer = account.signer
     account.signer = signer
+    try:
+        if is_v3:
+            return await account.execute_v3(
+                calls=call,
+                l1_resource_bounds=ResourceBounds(
+                    max_amount=int(max_fee / (100 * 10**9)),
+                    max_price_per_unit=100 * 10**9 + 1,
+                ))
+        else:
+            return await account.execute_v1(calls=call, max_fee=max_fee)
+    finally:
+        account.signer = prev_signer
+
+
+async def assert_execute_fails_with_signer(account: Account, call: Call,
+                                           signer, expected_error):
     with pytest.raises(
             Exception,
             match=encode_string_as_hex(expected_error)
             if expected_error is not None and False else None,
     ) as e:
-        exec = await account.execute(
-            calls=call,
-            #            max_fee=int(0.1 * 10**18),
-            auto_estimate=True,
-            # cairo_version=1,
-        )
-
-    #        await account.client.wait_for_tx(exec.transaction_hash)
-    account.signer = prev_signer
+        tx = await execute_with_signer(account, call, signer)
+        await account.client.wait_for_tx(tx.transaction_hash)
 
 
 def compute_myswap_cl_pool_key(token1_addr: int, token2_addr: int, fee: int):
@@ -387,20 +440,20 @@ async def execute_calls(account: Account,
                         execute_v3=False):
     if execute_v3 is False:
         if max_fee is None:
-            invoke_txn = await account.sign_invoke_v1_transaction(
+            invoke_txn = await account.sign_invoke_v1(
                 calls,
                 max_fee=int(0.1 * 10**18),
             )
             invoke_est_fee = await account.sign_for_fee_estimate(invoke_txn)
             est_fee = await account.client.estimate_fee(invoke_est_fee)
             max_fee = est_fee.overall_fee + 25000 * est_fee.gas_price
-        exec = await account.execute(
+        exec = await account.execute_v1(
             calls,
             # cairo_version=cairo_version,
             max_fee=max_fee,
         )
     else:
-        invoke_txn = await account.sign_invoke_v3_transaction(
+        invoke_txn = await account.sign_invoke_v3(
             calls,
             l1_resource_bounds=ResourceBounds(
                 max_amount=10**17,
@@ -472,7 +525,7 @@ async def declare_v2(client: FullNodeClient, account: Account,
         casm_content = f.read()
 
     casm_chash = compute_casm_class_hash(CasmClassSchema().loads(casm_content))
-    declare_signed_txn = await account.sign_declare_v2_transaction(
+    declare_signed_txn = await account.sign_declare_v2(
         compiled_contract=sierra_content,
         compiled_class_hash=casm_chash,
         max_fee=int(0.1 * 10**18),
@@ -487,7 +540,7 @@ def parse_calls_for_typed_data(calls):
     for call in calls:
         _data = {
             "To": call.to_addr,
-            "Selector": call.selector,
+            "Selector": hex(call.selector),
             "Calldata": call.calldata,
         }
         calls_parsed.append(_data)

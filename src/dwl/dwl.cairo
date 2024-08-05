@@ -13,6 +13,7 @@ mod DwlComponent {
     use starknet::syscalls::get_execution_info_v2_syscall;
     use starknet::get_tx_info;
     use starknet::{SyscallResultTrait, ContractAddress,};
+    use starknet::storage::Map;
 
     #[derive(Drop, starknet::Event)]
     struct WithdrawalLimitLowSet {
@@ -28,7 +29,7 @@ mod DwlComponent {
     struct Storage {
         withdrawal_limit_low: u128,
         withdrawal_limit_high: u128,
-        daily_spending: LegacyMap<u64, u128>,
+        daily_spending: Map<u64, u128>,
     }
 
     #[event]
@@ -62,7 +63,8 @@ mod DwlComponent {
             block_timestamp / Consts::SECONDS_IN_DAY
         }
 
-        /// Helper function returning the type of signer required based on spend and existing threholds
+        /// Helper function returning the type of signer required based on spend and existing
+        /// threholds
         #[inline(always)]
         fn get_signer_by_dwl(
             withdrawal_limit_low: u128,
@@ -70,9 +72,9 @@ mod DwlComponent {
             daily_spend: u128,
             strongest_signer: RequiredSigner
         ) -> RequiredSigner {
-            if DwlUtilImpl::is_in_low_range(withdrawal_limit_low, daily_spend) {
+            if Self::is_in_low_range(withdrawal_limit_low, daily_spend) {
                 return RequiredSigner::Stark;
-            } else if DwlUtilImpl::is_in_mid_range(
+            } else if Self::is_in_mid_range(
                 withdrawal_limit_low, withdrawal_limit_high, daily_spend
             ) {
                 return RequiredSigner::Strong;
@@ -130,7 +132,7 @@ mod DwlComponent {
         +IRateServiceInternal<TContractState>,
         +Drop<TContractState>,
     > of IDwlInternal<ComponentState<TContractState>> {
-        /// Saves the new low limit threshold in storage. Verifies it is legal and that there 
+        /// Saves the new low limit threshold in storage. Verifies it is legal and that there
         /// are fee rates saved.
         fn _set_withdrawal_limit_high_inner(
             ref self: ComponentState<TContractState>,
@@ -161,7 +163,7 @@ mod DwlComponent {
             self.withdrawal_limit_high.write(withdrawal_limit_high);
         }
 
-        /// Saves the new high limit threshold in storage. Verifies it is legal and that there 
+        /// Saves the new high limit threshold in storage. Verifies it is legal and that there
         /// are fee rates saved.
         fn _set_withdrawal_limit_low_inner(
             ref self: ComponentState<TContractState>,
@@ -187,19 +189,19 @@ mod DwlComponent {
             self.withdrawal_limit_low.write(withdrawal_limit_low);
         }
 
-        /// Fetches stored low threshold limit 
+        /// Fetches stored low threshold limit
         fn _get_withdrawal_limit_low_inner(self: @ComponentState<TContractState>) -> u128 {
             self.withdrawal_limit_low.read()
         }
 
-        /// Fetches stored high threshold limit 
+        /// Fetches stored high threshold limit
         fn _get_withdrawal_limit_high_inner(self: @ComponentState<TContractState>) -> u128 {
             self.withdrawal_limit_high.read()
         }
 
         /// Updates the daily spend given the new fee rate. The daily spend was updated during
         /// the validate step with stored fee rate which might be stale. The previously added
-        /// fee rate is removed and the new one is added. 
+        /// fee rate is removed and the new one is added.
         #[inline(always)]
         fn _update_fee_rate_and_adjust_daily_spending(
             ref self: ComponentState<TContractState>,
@@ -247,8 +249,8 @@ mod DwlComponent {
             }
         }
 
-        /// Returns the bypass range of the current daily spending and transaction fee. 
-        /// Also adds the fee value to the daily spend. Fee is added at this point to 
+        /// Returns the bypass range of the current daily spending and transaction fee.
+        /// Also adds the fee value to the daily spend. Fee is added at this point to
         /// prevent drainage attacks when dwl is set in an account and stark private key
         /// is compromised.
         fn _handle_bypass_calls_on_validate(
@@ -294,7 +296,7 @@ mod DwlComponent {
         }
 
         /// This function is meant to run before executing calls in the __execute__ function
-        /// If the input is a valid dwl call span then this function would return a report of 
+        /// If the input is a valid dwl call span then this function would return a report of
         /// the balances of all logged tokens.
         fn _handle_bypass_calls_pre_execute(
             ref self: ComponentState<TContractState>, calls: Span<Call>, block_timestamp: u64,
@@ -443,8 +445,8 @@ mod DwlComponent {
             /// Reaching here means that while the call structure is that of a valid bypass call,
             /// the daily spending status does not match the processed signature or we are at the
             /// highest range. In both cases we would like to validate the signature fully like
-            /// a non dwl transaction. Also we are deducting the fee spending added during the __validate__
-            /// phase
+            /// a non dwl transaction. Also we are deducting the fee spending added during the
+            /// __validate__ phase
             self
                 .daily_spending
                 .write(
@@ -458,7 +460,7 @@ mod DwlComponent {
 
 
         /// A valid single call must be a whitelisted token and have the structure of an approve
-        /// or transfer. 
+        /// or transfer.
         fn _validate_single_call_structure(
             self: @ComponentState<TContractState>,
             selector: felt252,
@@ -477,7 +479,7 @@ mod DwlComponent {
             return false;
         }
 
-        /// This function validates a couplet of calls. The valid structure is one approve 
+        /// This function validates a couplet of calls. The valid structure is one approve
         /// and then a whitelisted call. Theres also a mainnet hardcoded option for myswapcl.
         fn _validate_couplet_call_structure(
             self: @ComponentState<TContractState>, calls: Span<Call>,
@@ -499,7 +501,7 @@ mod DwlComponent {
                     .get_contract()
                     ._get_whitelist_call_type(*second_call.to, *second_call.selector);
 
-                // if the type of whitelisted call, it means that there is no config 
+                // if the type of whitelisted call, it means that there is no config
                 // we therefor check whether this is the hardcoded myswapcl swap call
                 if whitelist_type == WhitelistCallType::NA {
                     return (*second_call.to).into() == MainnetConfig::MYSWAP_CL_ADDRESS
@@ -512,7 +514,7 @@ mod DwlComponent {
             return false;
         }
 
-        /// This function validates a triplet of calls. The valid structure is two consecutive 
+        /// This function validates a triplet of calls. The valid structure is two consecutive
         /// approves and then a valid white listed call.
         fn _validate_triplet_call_structure(
             self: @ComponentState<TContractState>, calls: Span<Call>,
@@ -529,7 +531,7 @@ mod DwlComponent {
                 );
             let first_approve_to = (*first_call.calldata).at(0);
             // we validate that the first call is a valid approval
-            // and that this approval is directed at the contract of the third call   
+            // and that this approval is directed at the contract of the third call
             if is_first_call_valid && *first_approve_to == (*third_call.to).into() {
                 let is_second_call_valid = self
                     ._validate_single_call_structure(
@@ -540,7 +542,7 @@ mod DwlComponent {
                     );
                 let second_approve_to = (*second_call.calldata).at(0);
                 // we validate that the second call is also a valid approval
-                // and that this approval is directed at the contract of the third call  
+                // and that this approval is directed at the contract of the third call
                 // we also validate that the two approves don't approve the same token
                 if is_second_call_valid
                     && *first_call.to != *second_call.to
@@ -635,8 +637,8 @@ mod DwlComponent {
             self.withdrawal_limit_high.read()
         }
 
-        /// Fetches the current daily spending in the units of the currency used as a 
-        /// threshold currency. 
+        /// Fetches the current daily spending in the units of the currency used as a
+        /// threshold currency.
         fn get_daily_spend(self: @ComponentState<TContractState>) -> u128 {
             let execution_info = get_execution_info_v2_syscall().unwrap_syscall().unbox();
             let block_timestamp = execution_info.block_info.unbox().block_timestamp;

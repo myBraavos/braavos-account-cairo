@@ -177,12 +177,11 @@ async def test_est_fee_sig_bypass(
     )
 
     max_fee = int(0.0001 * 10**18)
-    invoke_txn = await account.sign_invoke_v1_transaction(balanceof_call,
-                                                          max_fee=max_fee)
+    invoke_txn = await account.sign_invoke_v1(balanceof_call, max_fee=max_fee)
     invoke_est_fee = await account.sign_for_fee_estimate(invoke_txn)
     await devnet_client.estimate_fee(invoke_est_fee)
 
-    invoke_txn_v3 = await account.sign_invoke_v3_transaction(
+    invoke_txn_v3 = await account.sign_invoke_v3(
         balanceof_call,
         l1_resource_bounds=ResourceBounds(
             max_amount=int(max_fee / (100 * 10**9)),
@@ -335,7 +334,7 @@ async def test_setting_high_withdrawal_threshold_success(
         selector=get_selector_from_name("set_multisig_threshold"),
         calldata=[0],
     ),
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=removing_multsig_call,
         max_fee=int(0.1 * 10**18),
     )

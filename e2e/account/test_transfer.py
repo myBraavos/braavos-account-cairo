@@ -196,7 +196,7 @@ async def test_successful_single_range_transfer(
             ),
         )
     else:
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=transfer_call,
             max_fee=max_fee,
         )
@@ -255,7 +255,7 @@ async def test_successful_single_range_transfer(
             ),
         )
     else:
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=transfer_call,
             max_fee=max_fee,
         )
@@ -396,7 +396,7 @@ async def test_successful_dual_threshold_transfer(
             ),
         )
     else:
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=transfer_call,
             max_fee=max_fee,
         )
@@ -499,7 +499,7 @@ async def test_bad_calls_structure_cant_bypass(
             selector=get_selector_from_name("get_total_number_of_pools"),
             calldata=[])
 
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=[non_bypass_call],
             max_fee=int(0.1 * 10**18),
         )
@@ -545,7 +545,7 @@ async def test_bad_transfer_call(
             selector=get_selector_from_name("transfer"),
             calldata=[0, 10**17])
 
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=[malfunctioned_transfer_call],
             max_fee=int(0.1 * 10**18),
         )
@@ -761,7 +761,7 @@ async def test_successful_multicall(
                          selector=get_selector_from_name("transfer"),
                          calldata=[devnet_account.address, *to_uint256(1)])
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=transfer_call,
         max_fee=max_fee,
     )
@@ -851,7 +851,7 @@ async def test_multicall_bypass_failures(
 
     account.signer = stark_signer
     with pytest.raises(ClientError, match=encode_string_as_hex("INVALID_SIG")):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=[
                 bad_approve_bypass_call,
                 custom_call,
@@ -880,7 +880,7 @@ async def test_multicall_bypass_failures(
 
     account.signer = stark_signer
     with pytest.raises(ClientError, match=encode_string_as_hex("INVALID_SIG")):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=[
                 good_approve_bypass_call,
                 bad_approve_bypass_call,
@@ -910,7 +910,7 @@ async def test_multicall_bypass_failures(
 
     account.signer = stark_signer
     with pytest.raises(ClientError, match=encode_string_as_hex("INVALID_SIG")):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=[
                 approve_bypass_call1,
                 approve_bypass_call2,
@@ -940,7 +940,7 @@ async def test_multicall_bypass_failures(
 
     account.signer = stark_signer
     with pytest.raises(ClientError, match=encode_string_as_hex("INVALID_SIG")):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=[
                 approve_bypass_call1,
                 approve_bypass_call2,
@@ -967,7 +967,7 @@ async def test_multicall_bypass_failures(
 
     account.signer = stark_signer
     with pytest.raises(ClientError, match=encode_string_as_hex("INVALID_SIG")):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=[
                 good_approve_bypass_call,
                 custom_call,

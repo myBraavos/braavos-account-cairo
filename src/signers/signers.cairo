@@ -302,7 +302,8 @@ impl MoaExtSignerIntoFelt252 of Into<MoaExtSigner, felt252> {
 #[generate_trait]
 impl MoaExtSignerHelperMethods of MoaExtSignerHelperMethodsTrait {
     /// @param signature The signature of the transaction
-    /// Format of a signature: [ A_type, A_address, A_pub_key, A_r, A_s, A_sig_len, A_ext_sig, ...etc]
+    /// Format of a signature: [ A_type, A_address, A_pub_key, A_r, A_s, A_sig_len, A_ext_sig,
+    /// ...etc]
     /// The parsing here allows duplicates. They are filtered later.
     /// @return The list of signers from the transaction signature
     fn resolve_signers_from_sig(signature: Span<felt252>) -> Array::<MoaExtSigner> {
@@ -384,7 +385,8 @@ impl MoaSignerMethods of MoaSignerMethodsTrait {
         );
     }
 
-    /// Returns a single felt representation of the signer. In this case it is the address and public key
+    /// Returns a single felt representation of the signer. In this case it is the address and
+    /// public key
     fn guid(self: @MoaSigner) -> felt252 {
         let mut serialized = ArrayTrait::new();
         self.serialize(ref serialized);

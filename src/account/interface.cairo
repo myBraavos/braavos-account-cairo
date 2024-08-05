@@ -1,4 +1,5 @@
 use starknet::ClassHash;
+use starknet::ContractAddress;
 use starknet::account::Call;
 
 use braavos_account::signers::signers::{Secp256r1PubKey, SignerType, StarkPubKey};
@@ -88,7 +89,7 @@ trait IBraavosMOA<TState> {
 
     // Declare / Deploy validation
     fn __validate_deploy__(
-        self: @TState, class_hash: felt252, salt: felt252, stark_pub_key: StarkPubKey,
+        self: @TState, signers: Array<(ContractAddress, felt252)>, threshold: usize
     ) -> felt252;
     fn __validate_declare__(self: @TState, class_hash: felt252) -> felt252;
 }

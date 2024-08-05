@@ -215,7 +215,8 @@ mod BraavosMoaAccount {
             self.pending_txn._assert_new_unique_signers(pending_tx_hash, signers.span());
             let should_execute = confirmations >= self.pending_txn._get_adjusted_threshold();
 
-            // We either allow enough signers to execute or only 1 signer (that can execute or approve)
+            // We either allow enough signers to execute or only 1 signer (that can execute or
+            // approve)
             if signers.len() == 1 {
                 self
                     .daily_txn_limit
@@ -298,7 +299,7 @@ mod BraavosMoaAccount {
 
         // expected to be deployed via deploy syscall (UDC)
         fn __validate_deploy__(
-            self: @ContractState, class_hash: felt252, salt: felt252, stark_pub_key: StarkPubKey,
+            self: @ContractState, signers: Array<(ContractAddress, felt252)>, threshold: usize
         ) -> felt252 {
             panic_with_felt252(Errors::NOT_IMPLEMENTED);
             0
@@ -359,7 +360,8 @@ mod BraavosMoaAccount {
             self: @ContractState, calls: Span<Call>, should_execute: bool
         ) -> (u128, u128) {
             // structure should be:
-            // [executing_fee_limit_eth, executing_fee_limit_stark, signing_fee_limit_eth, signing_fee_limit_stark]
+            // [executing_fee_limit_eth, executing_fee_limit_stark, signing_fee_limit_eth,
+            // signing_fee_limit_stark]
             let fee_limit_index = if should_execute {
                 0
             } else {

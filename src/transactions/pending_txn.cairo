@@ -20,6 +20,7 @@ mod PendingTransactions {
     use braavos_account::transactions::interface::{
         IPendingTxnExternalTrait, IPendingTxnInternalTrait, Transaction
     };
+    use starknet::storage::Map;
 
     mod Consts {
         // 0.03 ETH limit for v1 transactions
@@ -61,7 +62,7 @@ mod PendingTransactions {
     #[storage]
     struct Storage {
         _transaction: Transaction,
-        _is_confirmed: LegacyMap<(felt252, felt252), bool>,
+        _is_confirmed: Map<(felt252, felt252), bool>,
     }
 
     /// @param calls The list of calls to execute

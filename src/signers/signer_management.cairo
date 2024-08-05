@@ -64,6 +64,7 @@ mod SignerManagementComponent {
     struct Storage {
         deferred_remove_signer_req: DeferredRemoveSignerRequest,
         deferred_req_time_delay: u64,
+        signer_change_index: u64,
     }
 
     #[event]
@@ -81,6 +82,21 @@ mod SignerManagementComponent {
         deferred_req: DeferredRemoveSignerRequest, block_timestamp: u64
     ) -> bool {
         deferred_req.expire_at != 0 && deferred_req.expire_at < block_timestamp
+    }
+
+    #[embeddable_as(SignerChangeManagementInternal)]
+    impl SignerChangeManagementInternalImpl<
+        TContractState, +HasComponent<TContractState>, +Drop<TContractState>,
+    > of interface::ISignerChangeManagementInternalImpl<ComponentState<TContractState>> {
+        #[inline(always)]
+        fn _increment_signer_change_index(ref self: ComponentState<TContractState>) {
+            self.signer_change_index.write(self.signer_change_index.read() + 1);
+        }
+
+        #[inline(always)]
+        fn _get_signer_change_index(self: @ComponentState<TContractState>) -> u64 {
+            self.signer_change_index.read()
+        }
     }
 
     #[embeddable_as(SignerManagementImplInternal)]
@@ -105,6 +121,8 @@ mod SignerManagementComponent {
                         signer_data: array![].span(),
                     }
                 );
+
+            self._increment_signer_change_index();
         }
 
         /// Adds strong secp256r1 signer to storage
@@ -129,6 +147,7 @@ mod SignerManagementComponent {
                             .span(),
                     }
                 );
+            self._increment_signer_change_index();
         }
 
         /// When removing signer not as an etd endpoint this function will remove existing
@@ -169,6 +188,7 @@ mod SignerManagementComponent {
                     }
                 );
             self._handle_deferred_request_when_signer_removal(expired_etd);
+            self._increment_signer_change_index();
         }
 
         /// Removes all strong signers from account
@@ -208,6 +228,7 @@ mod SignerManagementComponent {
             };
 
             self._handle_deferred_request_when_signer_removal(expired_etd);
+            self._increment_signer_change_index();
         }
 
         /// Checks whether a deferred signer removal request has expired and if so removes all
@@ -225,7 +246,8 @@ mod SignerManagementComponent {
                             expired_deferred_request: deferred_req
                         }
                     );
-                // Deferred removal removes all strong signers so multisig and DWL should be disabled
+                // Deferred removal removes all strong signers so multisig and DWL should be
+                // disabled
                 mut_contract._set_multisig_threshold_inner(multisig_threshold: 0, num_signers: 1);
                 self._remove_all_secp256r1_signers_unsafe(expired_etd: true);
                 if mut_contract._get_withdrawal_limit_low_inner() != 0 {
@@ -291,7 +313,8 @@ mod SignerManagementComponent {
         /// removes strong secp256r1 signer from account.
         /// @param guid - represents the hash of the signer's public key
         /// @param signer_type - type of the signer to remove
-        /// @param multisig_threshold - when removing strong signer, multisig threshold can be changed
+        /// @param multisig_threshold - when removing strong signer, multisig threshold can be
+        /// changed
         fn remove_secp256r1_signer(
             ref self: ComponentState<TContractState>,
             guid: felt252,

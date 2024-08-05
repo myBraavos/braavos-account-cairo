@@ -227,8 +227,8 @@ async def test_deployment_from_UDC(init_starknet, account_declare,
     secp256r1_pubk = flatten_seq(secp256r1_kp[1])
 
     def udc_depl_signer(txn: AccountTransaction):
-        stark_sig = message_signature(
-            txn.calculate_hash(StarknetChainId.TESTNET), stark_privk)
+        stark_sig = message_signature(txn.calculate_hash(DEVNET_CHAIN_ID),
+                                      stark_privk)
         aux_data = [
             account_chash,
             *[2, *secp256r1_pubk],  # Dummy SECP256R1 signer
@@ -236,7 +236,7 @@ async def test_deployment_from_UDC(init_starknet, account_declare,
             0,  # DWL low
             0,  # Eth fee rate
             0,  # STRK fee rate
-            StarknetChainId.TESTNET,
+            DEVNET_CHAIN_ID,
         ]
         aux_hash = poseidon_hash_many(aux_data)
         aux_sig = message_signature(aux_hash, stark_privk)
@@ -252,8 +252,8 @@ async def test_deployment_from_UDC(init_starknet, account_declare,
         ["sign_transaction"])(lambda depl_txn: udc_depl_signer(depl_txn))
     devnet_account_orig_signer = devnet_account.signer
     devnet_account.signer = udc_deploy_signer
-    invoke_txn = await devnet_account.sign_invoke_v1_transaction(
-        deployment_call, max_fee=int(0.1 * 10**18))
+    invoke_txn = await devnet_account.sign_invoke_v1(deployment_call,
+                                                     max_fee=int(0.1 * 10**18))
 
     # starknet.py == 0.18.3 doesn't support latest simulate response, so call it raw
     # simul_res = await devnet_client.simulate_transactions([invoke_txn], skip_validate=True)
@@ -320,7 +320,7 @@ async def test_deployment_from_factory(
         withdrawal_limit_low,
         fee_rate,
         fee_rate,
-        StarknetChainId.TESTNET,
+        DEVNET_CHAIN_ID,
     ]
     aux_hash = poseidon_hash_many(aux_data)
     aux_sig = message_signature(aux_hash, stark_privk)
@@ -338,13 +338,13 @@ async def test_deployment_from_factory(
                                        salt=stark_pubk,
                                        constructor_calldata=[stark_pubk],
                                        deployer_address=0)
-    exec_txn = await devnet_account.execute(
+    exec_txn = await devnet_account.execute_v1(
         calls=deployment_call,
         max_fee=int(0.1 * 10**18),
     )
     await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
-    exec = await devnet_account.execute(
+    exec = await devnet_account.execute_v1(
         Call(
             to_addr=utils_v2.STRK_ADDRESS if is_v3 else ETH_TOKEN_ADDRESS,
             selector=get_selector_from_name("transfer"),
@@ -362,7 +362,7 @@ async def test_deployment_from_factory(
         client=devnet_client,
         address=expected_address,
         key_pair=KeyPair.from_private_key(stark_privk),
-        chain=StarknetChainId.TESTNET,
+        chain=DEVNET_CHAIN_ID,
     )
 
     deployed_account_chash = await devnet_client.get_class_hash_at(
@@ -416,7 +416,7 @@ async def test_deployment_from_malicious_factory_and_init_from_account(
     devnet_account: Account
     devnet_client: FullNodeClient
 
-    factor_upgrade_txn = await devnet_account.execute(
+    factor_upgrade_txn = await devnet_account.execute_v1(
         Call(
             to_addr=account_factory_address,
             selector=get_selector_from_name('upgrade'),
@@ -441,7 +441,7 @@ async def test_deployment_from_malicious_factory_and_init_from_account(
         withdrawal_limit_low,
         fee_rate,
         fee_rate,
-        StarknetChainId.TESTNET,
+        DEVNET_CHAIN_ID,
     ]
     aux_hash = poseidon_hash_many(aux_data)
     aux_sig = message_signature(aux_hash, stark_privk)
@@ -458,13 +458,13 @@ async def test_deployment_from_malicious_factory_and_init_from_account(
                                        salt=stark_pubk,
                                        constructor_calldata=[stark_pubk],
                                        deployer_address=0)
-    exec_txn = await devnet_account.execute(
+    exec_txn = await devnet_account.execute_v1(
         calls=deployment_call,
         max_fee=int(0.1 * 10**18),
     )
     await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
-    exec = await devnet_account.execute(
+    exec = await devnet_account.execute_v1(
         Call(
             to_addr=utils_v2.STRK_ADDRESS if is_v3 else ETH_TOKEN_ADDRESS,
             selector=get_selector_from_name("transfer"),
@@ -482,7 +482,7 @@ async def test_deployment_from_malicious_factory_and_init_from_account(
         client=devnet_client,
         address=expected_address,
         key_pair=KeyPair.from_private_key(stark_privk),
-        chain=StarknetChainId.TESTNET,
+        chain=DEVNET_CHAIN_ID,
     )
 
     # the account is in a hanging state - the ctor was called and the account exists on chain
@@ -577,7 +577,7 @@ async def test_upgrade(
                                                       is_webauthn=False)
     account: Account
     if src6_supported:
-        await account.execute(
+        await account.execute_v1(
             Call(to_addr=account.address,
                  selector=get_selector_from_name('upgrade'),
                  calldata=[upgrade_declare[0]]),
@@ -588,7 +588,7 @@ async def test_upgrade(
         assert migrated_storage == int.from_bytes(b'001.001.000', 'big')
     else:
         with pytest.raises(Exception):
-            await account.execute(
+            await account.execute_v1(
                 Call(to_addr=account.address,
                      selector=get_selector_from_name('upgrade'),
                      calldata=[upgrade_declare[1]]),
@@ -703,7 +703,7 @@ async def test_fail_initializer_after_deployment(account_deployer, ):
     account, _ = await account_deployer(stark_privk, None, 0)
     account: Account
     with pytest.raises(Exception):
-        await account.execute(
+        await account.execute_v1(
             Call(to_addr=account.address,
                  selector=get_selector_from_name('initializer'),
                  calldata=[31337]),

@@ -72,7 +72,7 @@ async def test_deferred_remove_secp256r1_signer(
 
     account_etd = 24 * 4 * 60 * 60
     if custom_etd is not None:
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             Call(
                 to_addr=account.address,
                 selector=get_selector_from_name("set_execution_time_delay"),
@@ -93,7 +93,7 @@ async def test_deferred_remove_secp256r1_signer(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk, signer_type, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -124,7 +124,7 @@ async def test_deferred_remove_secp256r1_signer(
 
     # Fail on invalid deferred removal call with calldata
     with pytest.raises(Exception, match="INVALID_ENTRYPOINT"):
-        await account.execute(
+        await account.execute_v1(
             calls=Call(
                 to_addr=deferred_remove_call.to_addr,
                 selector=deferred_remove_call.selector,
@@ -135,7 +135,7 @@ async def test_deferred_remove_secp256r1_signer(
 
     # Fail on high fees or paymaster
     with pytest.raises(Exception, match="INVALID_TX"):
-        signed_txn = await account.sign_invoke_v3_transaction(
+        signed_txn = await account.sign_invoke_v3(
             calls=Call(
                 to_addr=deferred_remove_call.to_addr,
                 selector=deferred_remove_call.selector,
@@ -152,7 +152,7 @@ async def test_deferred_remove_secp256r1_signer(
         exec_txn = await devnet_client.send_transaction(signed_txn)
         await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
-        exec_txn = await account.execute_v3(
+        exec_txn = await account.execute_v1_v3(
             calls=Call(
                 to_addr=deferred_remove_call.to_addr,
                 selector=deferred_remove_call.selector,
@@ -164,7 +164,7 @@ async def test_deferred_remove_secp256r1_signer(
             ))
         await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=Call(
                 to_addr=deferred_remove_call.to_addr,
                 selector=deferred_remove_call.selector,
@@ -174,7 +174,7 @@ async def test_deferred_remove_secp256r1_signer(
         )
         await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=deferred_remove_call,
         auto_estimate=True,
         # max_fee=int(0.1 * 10**18),
@@ -195,7 +195,7 @@ async def test_deferred_remove_secp256r1_signer(
 
     # fail adding concurrent deferred removal
     with pytest.raises(Exception):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=deferred_remove_call,
             auto_estimate=True,
             # max_fee=int(0.1 * 10**18),
@@ -214,7 +214,7 @@ async def test_deferred_remove_secp256r1_signer(
     # Fail as etd didn't expire yet
     with pytest.raises(Exception):
         account.signer = stark_signer
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             auto_estimate=True,
             # max_fee=int(0.1 * 10**18),
@@ -259,7 +259,7 @@ async def test_deferred_remove_secp256r1_signer(
 
     # Legacy Stark should work
     account.signer = legacy_stark_signer
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=balanceof_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -272,7 +272,7 @@ async def test_deferred_remove_secp256r1_signer(
             account.signer = secp256r1_signer
         elif multisig_threshold == 2:
             account.signer = multisig_signer
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             auto_estimate=True,
             # max_fee=int(0.1 * 10**18),
@@ -318,8 +318,8 @@ async def test_deferred_remove_all_signers(init_starknet, account_deployer,
     # check just for non-multisig case, no need for redundant checks for other parameters
     if multisig_threshold == 0:
         with pytest.raises(Exception, match="INVALID_ENTRYPOINT"):
-            await account.execute(calls=deferred_remove_call,
-                                  auto_estimate=True)
+            await account.execute_v1(calls=deferred_remove_call,
+                                     auto_estimate=True)
 
     requests.post(f"{devnet_url}/set_time", json={"time": time.time()})
 
@@ -335,7 +335,7 @@ async def test_deferred_remove_all_signers(init_starknet, account_deployer,
             *webauthn_secp256r1_pubk, WEBAUTHN_SIGNER_TYPE, multisig_threshold
         ])
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=[add_secp256r1_call, add_webauthn_secp256r1_call],
         max_fee=int(0.1 * 10**18),
     )
@@ -346,8 +346,8 @@ async def test_deferred_remove_all_signers(init_starknet, account_deployer,
     # multisig_signer = create_multisig_signer(stark_signer, secp256r1_signer)
 
     account.signer = stark_signer
-    exec_txn = await account.execute(calls=deferred_remove_call,
-                                     max_fee=10**16)
+    exec_txn = await account.execute_v1(calls=deferred_remove_call,
+                                        max_fee=10**16)
     res = await devnet_client.wait_for_tx(exec_txn.transaction_hash)
     block = await devnet_client.get_block(block_number=res.block_number)
     block_timestamp = block.timestamp
@@ -364,7 +364,7 @@ async def test_deferred_remove_all_signers(init_starknet, account_deployer,
 
     # fail adding concurrent deferred removal
     with pytest.raises(Exception):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=deferred_remove_call,
             auto_estimate=True,
             # max_fee=int(0.1 * 10**18),
@@ -378,7 +378,7 @@ async def test_deferred_remove_all_signers(init_starknet, account_deployer,
 
     with pytest.raises(Exception):
         account.signer = stark_signer
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             auto_estimate=True,
             # max_fee=int(0.1 * 10**18),
@@ -395,7 +395,7 @@ async def test_deferred_remove_all_signers(init_starknet, account_deployer,
 
     with pytest.raises(Exception):
         account.signer = stark_signer
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             auto_estimate=True,
             # max_fee=int(0.1 * 10**18),
@@ -451,7 +451,7 @@ async def test_deferred_remove_all_signers(init_starknet, account_deployer,
 
     # Legacy Stark should work
     account.signer = legacy_stark_signer
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=balanceof_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -513,7 +513,7 @@ async def test_cancel_deferred_remove_secp256r1_signer(
         to_addr=account.address,
         selector=get_selector_from_name('add_secp256r1_signer'),
         calldata=[*secp256r1_pubk, signer_type, multisig_threshold])
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -530,8 +530,8 @@ async def test_cancel_deferred_remove_secp256r1_signer(
         selector=get_selector_from_name("deferred_remove_signers"),
         calldata=[],
     )
-    exec_txn = await account.execute(calls=deferred_remove_call,
-                                     max_fee=10**16)
+    exec_txn = await account.execute_v1(calls=deferred_remove_call,
+                                        max_fee=10**16)
     res = await devnet_client.wait_for_tx(exec_txn.transaction_hash)
     assert txn_receipt_contains_event(
         res,
@@ -552,7 +552,7 @@ async def test_cancel_deferred_remove_secp256r1_signer(
     elif multisig_threshold == 2:
         account.signer = multisig_signer
 
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=remove_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -574,14 +574,14 @@ async def test_cancel_deferred_remove_secp256r1_signer(
 
     # Re-add the signer and cancel the deferred req directly
     account.signer = stark_signer
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=add_secp256r1_call,
         max_fee=int(0.1 * 10**18),
     )
     await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
-    exec_txn = await account.execute(calls=deferred_remove_call,
-                                     max_fee=10**16)
+    exec_txn = await account.execute_v1(calls=deferred_remove_call,
+                                        max_fee=10**16)
     res = await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
     cancel_deferred_remove_call = Call(
@@ -592,7 +592,7 @@ async def test_cancel_deferred_remove_secp256r1_signer(
 
     # Stark signer cannot cancel
     with pytest.raises(Exception):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=cancel_deferred_remove_call,
             auto_estimate=True,
             # max_fee=int(0.1 * 10**18),
@@ -604,7 +604,7 @@ async def test_cancel_deferred_remove_secp256r1_signer(
         account.signer = secp256r1_signer
     elif multisig_threshold == 2:
         account.signer = multisig_signer
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         calls=cancel_deferred_remove_call,
         max_fee=int(0.1 * 10**18),
     )
@@ -635,14 +635,14 @@ async def test_cancel_deferred_remove_secp256r1_signer(
     # Stark signer can't sign as deferred remove req should never have happened
     with pytest.raises(Exception):
         account.signer = stark_signer
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             auto_estimate=True,
             # max_fee=int(0.1 * 10**18),
         )
 
         account.signer = legacy_stark_signer
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=balanceof_call,
             auto_estimate=True,
             # max_fee=int(0.1 * 10**18),

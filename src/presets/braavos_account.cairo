@@ -38,6 +38,8 @@ mod BraavosAccount {
     use braavos_account::utils::asserts::assert_self_caller;
     use braavos_account::utils::utils::{execute_calls, extract_fee_from_tx};
     use braavos_account::outside_execution::outside_execution::OutsideExecComponent;
+    use braavos_account::sessions::utils::is_session_execute;
+    use braavos_account::sessions::sessions::SessionComponent;
 
     mod Errors {
         const ALREADY_INITIALIZED: felt252 = 'ALREADY_INITIALIZED';
@@ -78,6 +80,8 @@ mod BraavosAccount {
         SignerManagementComponent::SignerManagementImpl<ContractState>;
     impl SignerManagementImplInternal =
         SignerManagementComponent::SignerManagementImplInternal<ContractState>;
+    impl SignerChangeManagementInternalImpl =
+        SignerManagementComponent::SignerChangeManagementInternal<ContractState>;
 
     // Multisig
     component!(path: MultisigComponent, storage: multisig, event: MultisigEvt);
@@ -102,6 +106,20 @@ mod BraavosAccount {
     component!(path: OutsideExecComponent, storage: outside_exec, event: OutsideExecEvt);
     #[abi(embed_v0)]
     impl OutsideExecImpl = OutsideExecComponent::OutsideExecImpl<ContractState>;
+
+    // Sessions
+    component!(path: SessionComponent, storage: sessions, event: SessionsEvt);
+    #[abi(embed_v0)]
+    impl SessionManagementExternalImpl =
+        SessionComponent::SessionManagementExternal<ContractState>;
+    #[abi(embed_v0)]
+    impl GasSponsoredSessionExecImpl =
+        SessionComponent::GasSponsoredSessionExec<ContractState>;
+    #[abi(embed_v0)]
+    impl SessionExecuteExternalImpl =
+        SessionComponent::SessionExecuteExternal<ContractState>;
+    impl SessionExecuteInternalImpl = SessionComponent::SessionExecuteInternal<ContractState>;
+
 
     /// ProcessedDeploymentSignature represents a parsed deployment signature
     /// @param signature - stark signed sig
@@ -154,6 +172,8 @@ mod BraavosAccount {
         rate: RateComponent::Storage,
         #[substorage(v0)]
         outside_exec: OutsideExecComponent::Storage,
+        #[substorage(v0)]
+        sessions: SessionComponent::Storage,
     }
 
     #[event]
@@ -172,7 +192,9 @@ mod BraavosAccount {
         #[flat]
         RateEvent: RateComponent::Event,
         #[flat]
-        OutsideExecEvt: OutsideExecComponent::Event
+        OutsideExecEvt: OutsideExecComponent::Event,
+        #[flat]
+        SessionsEvt: SessionComponent::Event
     }
 
     #[constructor]
@@ -269,7 +291,8 @@ mod BraavosAccount {
                 let cdata_len: u32 = (*signature.at(sig_offset + authdata_len + 2))
                     .try_into()
                     .unwrap();
-                // [ len(auth_data), *authdata, authdata_padding, len(cdata), *cdata, client_data_u32s_padding,
+                // [ len(auth_data), *authdata, authdata_padding, len(cdata), *cdata,
+                // client_data_u32s_padding,
                 //    challenge_offset, challenge_len, base64_padding, *sig, force_cairo_impl ]
                 let sig_len = (1 + authdata_len + 2 + cdata_len + 4 + RS_LEN_SECP256R1 + 1);
 
@@ -491,7 +514,8 @@ mod BraavosAccount {
 
         /// This function initializes the account when deployed from the Braavos Account Factory
         /// @param stark_pub_key - This account's stark signer public key
-        /// @param deployment_params - Additional parameters to initialize the account on top of CTOR initialization
+        /// @param deployment_params - Additional parameters to initialize the account on top of
+        /// CTOR initialization
         fn initializer_from_factory(
             ref self: ContractState,
             stark_pub_key: StarkPubKey,
@@ -511,6 +535,10 @@ mod BraavosAccount {
             let tx_info = execution_info.tx_info.unbox();
             assert(tx_info.version != 0, Errors::INVALID_TX_VERSION);
             let block_timestamp = execution_info.block_info.unbox().block_timestamp;
+
+            if (is_session_execute(calls)) {
+                return self.sessions._execute_session_calls(calls);
+            }
 
             let dwl_status_pre_execute = self
                 .dwl
@@ -562,11 +590,13 @@ mod BraavosAccount {
 
         /// Starknet account standard validate function. This function parses the incoming
         /// signature and decides whether this function should be executed.
-        /// First part is to apply any expired deferred signer removal requests in _apply_deferred_remove_signers_req
-        /// After that the signature is parsed in _validate_signature_common.
+        /// First part is to apply any expired deferred signer removal requests in
+        /// _apply_deferred_remove_signers_req After that the signature is parsed in
+        /// _validate_signature_common.
         /// Then we check whether this is a possible bypass call where we can use a weaker signer
         /// in _handle_bypass_calls_on_validate. The final validation would occur in __execute__.
-        /// Finally the processed signature is validated according to the signers defined in account.
+        /// Finally the processed signature is validated according to the signers defined in
+        /// account.
         fn __validate__(ref self: ContractState, calls: Span<Call>) -> felt252 {
             let exec_info = get_execution_info_v2_syscall().unwrap_syscall().unbox();
             assert(exec_info.caller_address.is_zero(), Errors::NO_REENTRANCE);
@@ -578,28 +608,37 @@ mod BraavosAccount {
 
             let version = Into::<felt252, u256>::into(tx_info.version);
             let is_query_txn_ver = version.high == 1;
-            let processed_sig = _validate_signature_common(
-                @self, tx_hash, signature, !is_query_txn_ver
-            );
-            // also asserts that the etd call is valid meaning we will REJECT in __validate__
-            let fee = extract_fee_from_tx(@tx_info, version);
-            let is_etd_selector = _assert_valid_etd_call(
-                calls, fee, version, tx_info.paymaster_data
-            );
+            if is_session_execute(calls) {
+                self.sessions._validate_session_execute(tx_info, block_timestamp, calls,)
+            } else {
+                let processed_sig = _validate_signature_common(
+                    @self, tx_hash, signature, !is_query_txn_ver
+                );
+                // also asserts that the etd call is valid meaning we will REJECT in __validate__
+                let fee = extract_fee_from_tx(@tx_info, version);
+                let is_etd_selector = _assert_valid_etd_call(
+                    calls, fee, version, tx_info.paymaster_data
+                );
 
-            let bypass_range = self
-                .dwl
-                ._handle_bypass_calls_on_validate(block_timestamp, calls, fee, version.low.into());
-            // checking that at least some signature is verified otherwise anyone can start draining
-            if bypass_range == BypassRange::LowerRange
-                && processed_sig.is_any_signature_validated() {
-                return starknet::VALIDATED;
-            } else if bypass_range == BypassRange::MidRange
-                && processed_sig.is_any_strong_signature_validated() {
-                return starknet::VALIDATED;
+                let bypass_range = self
+                    .dwl
+                    ._handle_bypass_calls_on_validate(
+                        block_timestamp, calls, fee, version.low.into()
+                    );
+                // checking that at least some signature is verified otherwise anyone can start
+                // draining
+                if bypass_range == BypassRange::LowerRange
+                    && processed_sig.is_any_signature_validated() {
+                    return starknet::VALIDATED;
+                } else if bypass_range == BypassRange::MidRange
+                    && processed_sig.is_any_strong_signature_validated() {
+                    return starknet::VALIDATED;
+                }
+
+                _validate_processed_signature(
+                    @self, processed_sig, is_etd_selector, block_timestamp
+                )
             }
-
-            _validate_processed_signature(@self, processed_sig, is_etd_selector, block_timestamp)
         }
 
         fn is_valid_signature(

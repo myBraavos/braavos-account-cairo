@@ -58,8 +58,8 @@ mod MainnetConfig {
 }
 
 
-/// PreExecuteBypassState Data structure that holds the state of user's balances right before the execute
-/// @param - balance_report is a list of tokens and their balances
+/// PreExecuteBypassState Data structure that holds the state of user's balances right before the
+/// execute @param - balance_report is a list of tokens and their balances
 /// @param - bypass_call_type indicates whether this is a bypass call or not
 /// @param - range_on_validate is the range that was deduced during the validate stage
 #[derive(Copy, Drop, Serde)]
@@ -146,10 +146,10 @@ trait IDwlInternal<TState> {
     ) -> bool;
 }
 
-/// TokenConfig represents all info required to analyze the value of a transfer of a certain 
+/// TokenConfig represents all info required to analyze the value of a transfer of a certain
 /// token
 /// @param - is_threshold_currency is true if this token is the token in which dwl limits
-/// values are denominated. 
+/// values are denominated.
 /// @param - token_address
 /// @param - pool_key is used to access myswap cl info on this token
 /// @param - is_threshold_currency_token0 is true if address of threhold currency < token address
@@ -164,7 +164,8 @@ struct TokenConfig {
 /// WhitelistCallConfig represents a whitelisted call
 /// @param - to is whitelisted contract address
 /// @param - selector is whitelisted function selector
-/// @param - whitelist_call_type: 1 means there should be 1 approval before, 2 allows 2 approvals before
+/// @param - whitelist_call_type: 1 means there should be 1 approval before, 2 allows 2 approvals
+/// before
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct WhitelistCallConfig {
     to: ContractAddress,

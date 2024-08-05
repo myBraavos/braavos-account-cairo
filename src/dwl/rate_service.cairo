@@ -33,15 +33,14 @@ mod RateComponent {
     use braavos_account::utils::asserts::{assert_self_caller};
     use braavos_account::utils::utils::{mulDiv};
     use dict::Felt252DictTrait;
+    use starknet::storage::Map;
 
     #[storage]
     struct Storage {
-        white_listed_tokens_map: LegacyMap<ContractAddress, TokenConfig>,
-        white_listed_custom_list: LegacyMap<u8, ContractAddress>,
+        white_listed_tokens_map: Map<ContractAddress, TokenConfig>,
+        white_listed_custom_list: Map<u8, ContractAddress>,
         white_listed_custom_list_length: u8,
-        white_listed_contracts_and_selectors: LegacyMap<
-            (ContractAddress, felt252), WhitelistCallType
-        >,
+        white_listed_contracts_and_selectors: Map<(ContractAddress, felt252), WhitelistCallType>,
         fee_token: TokenConfig,
         stark_fee_token: TokenConfig,
         stored_fee_rate_eth: u128,
@@ -79,11 +78,11 @@ mod RateComponent {
         mulDiv(amount, fee_rate.into(), Consts::ETHER).try_into().unwrap() + 1
     }
 
-    /// This function calculates the value of amount in the threshold currency using price 
+    /// This function calculates the value of amount in the threshold currency using price
     /// from the external price service.
     /// Note: the USDC decimals are 6 while other tokens like eth have 18 decimals.
     /// This means that for low enough amounts of eth, this function will evaluate to zero.
-    /// To prevent a scenario in which small enough amounts of eth are spent but always get 
+    /// To prevent a scenario in which small enough amounts of eth are spent but always get
     /// evaluated to zero and so the daily spending does not increase, we add an option to
     /// add an extra + 1. The only scenario where we don't add this +1 is when
     /// we calculate rate in _get_rate since the input there is 10**18.
@@ -362,7 +361,7 @@ mod RateComponent {
         /// the user had added manually and the hardcoded mainnet tokens. The function first
         /// iterates over the custom tokens based on white_listed_custom_list_length. After that
         /// it iterates over the hardcoded mainnet tokens and adds those as well. In the first
-        /// iteration it tracks the custom tokens so that it could skip hardcoded tokens that 
+        /// iteration it tracks the custom tokens so that it could skip hardcoded tokens that
         /// were manually modified by the user. Theres also a way in which a user can block
         /// certain mainnet hardcoded tokens. It can set them with pool key 0 and false on
         /// is_threshold_currency.
@@ -428,7 +427,7 @@ mod RateComponent {
         /// This function returns the diff in the threshold currency between the old and new
         /// balance of a given token. If the new balance is higher then we return zero since
         /// we only care about decreases in value since value gained in transaction is not
-        /// credited to the daily spending. 
+        /// credited to the daily spending.
         fn _get_diff_in_threshold_currency(
             self: @ComponentState<TContractState>,
             old_balance: u256,

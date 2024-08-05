@@ -2,7 +2,8 @@ use array::{ArrayTrait, SpanTrait};
 use option::{OptionTrait};
 use serde::Serde;
 use traits::{Into, TryInto};
-use integer::{u512, u256_as_non_zero, u512_safe_div_rem_by_u256, u256_wide_mul};
+use integer::{u512, u256_as_non_zero, u512_safe_div_rem_by_u256};
+use core::num::traits::WideMul;
 use starknet::{TxInfo, SyscallResultTrait};
 use starknet::syscalls::call_contract_syscall;
 use starknet::account::Call;
@@ -112,7 +113,7 @@ fn reconstruct_hash_from_challenge(
 }
 
 fn mulDiv(a: u256, b: u256, c: u256) -> u256 {
-    let x: u512 = u256_wide_mul(a, b);
+    let x: u512 = WideMul::wide_mul(a, b);
     let (res, _) = u512_safe_div_rem_by_u256(x, u256_as_non_zero(c));
     assert(res.limb2 + res.limb3 == 0, 'OVF');
     let x: u256 = u256 { low: res.limb0, high: res.limb1 };
@@ -179,7 +180,8 @@ fn u32_shr_div_for_pos(pos_in_u32: u32) -> u32 {
 /// Helper function that fetches the fee and tx version from exec info. Fee calculation
 /// depends on tx version.
 /// for v1 we take the max_info value
-/// for v3 we return (L1_max_amount * L1_max_price_per_unit) + L2_max_amount * (L2_max_price_per_unit + tip)
+/// for v3 we return (L1_max_amount * L1_max_price_per_unit) + L2_max_amount *
+/// (L2_max_price_per_unit + tip)
 fn extract_fee_from_tx(tx_info: @TxInfo, version: u256) -> u256 {
     if version.low == 1 {
         return (*tx_info.max_fee).into();

@@ -7,14 +7,17 @@ import pytest
 import pytest_asyncio
 import time
 import subprocess
+import random
 
 from e2e.utils.utils import *
 import e2e.utils.utils_v2 as utils_v2
 from e2e.utils.utils_v2 import ACCOUNTS
+from e2e.utils.typed_data import get_test_gas_sponsored_session_execution_object, get_test_session_execution_object
 
 from poseidon_py.poseidon_hash import poseidon_hash_many
 from starknet_py.constants import FEE_CONTRACT_ADDRESS
 from starknet_py.hash.class_hash import compute_class_hash
+from starknet_py.net.client_errors import ClientError
 from starknet_py.net.account.account import Account, KeyPair
 from starknet_py.net.client_models import Call
 from starknet_py.net.full_node_client import FullNodeClient
@@ -22,7 +25,7 @@ from starknet_py.hash.address import compute_address
 from starknet_py.hash.selector import get_selector_from_name
 from starknet_py.hash.transaction import compute_deploy_account_transaction_hash, compute_deploy_account_v3_transaction_hash
 from starknet_py.hash.utils import message_signature
-from starknet_py.net.schemas.gateway import ContractClassSchema
+from starknet_py.net.schemas.rpc.contract import ContractClassSchema
 from starknet_py.net.models.chains import StarknetChainId
 from starknet_py.net.models.transaction import DeployAccount
 from starknet_py.contract import Contract
@@ -101,8 +104,8 @@ async def init_starknet():
         address=devnet_account_address,
         client=sn_devnet_client,
         key_pair=KeyPair.from_private_key(devnet_account_privk),
-        chain=StarknetChainId.TESTNET,
-    )
+        chain=DEVNET_CHAIN_ID)
+
     process = subprocess.Popen(
         [
             os.environ['STARKNET_DEVNET'],
@@ -124,30 +127,43 @@ def declare_deploy_v1():
 
     async def _declare_deploy_v1(compiled_contract_path,
                                  devnet_account,
-                                 compiled_contract_casm_path=None,
                                  salt=0,
                                  unique=False):
 
-        compiled_contract = Path(compiled_contract_path).read_text()
-        if compiled_contract_casm_path:
-            compiled_contract_casm = Path(
-                compiled_contract_casm_path).read_text()
-        else:
-            compiled_contract_casm = None
+        compiled_contract_content = Path(compiled_contract_path).read_text()
+        compiled_contract = ContractClassSchema().loads(
+            compiled_contract_content, unknown="exclude")
+        class_hash = compute_class_hash(compiled_contract)
 
-        declare_result = await Contract.declare(
-            account=devnet_account,
-            compiled_contract=compiled_contract,
-            compiled_contract_casm=compiled_contract_casm,
-            max_fee=int(1e17),
-        )
-        await devnet_account.client.wait_for_tx(declare_result.hash)
-        deploy_result = await declare_result.deploy(max_fee=int(1e16),
-                                                    constructor_args=[],
-                                                    unique=unique,
-                                                    salt=salt)
-        await devnet_account.client.wait_for_tx(deploy_result.hash)
-        return deploy_result.deployed_contract
+        class_exists = True
+        try:
+            await devnet_account.client.get_class_by_hash(class_hash)
+        except ClientError:
+            class_exists = False
+
+        if class_exists:
+            deploy_result = await Contract.deploy_contract_v1(
+                account=devnet_account,
+                class_hash=class_hash,
+                abi=compiled_contract.abi,
+                constructor_args=[],
+                max_fee=int(1e17))
+            await devnet_account.client.wait_for_tx(deploy_result.hash)
+            return deploy_result.deployed_contract
+
+        else:
+            declare_result = await Contract.declare_v1(
+                account=devnet_account,
+                compiled_contract=compiled_contract_content,
+                max_fee=int(1e17),
+            )
+            await devnet_account.client.wait_for_tx(declare_result.hash)
+            deploy_result = await declare_result.deploy_v1(max_fee=int(1e16),
+                                                           constructor_args=[],
+                                                           unique=unique,
+                                                           salt=salt)
+            await devnet_account.client.wait_for_tx(deploy_result.hash)
+            return deploy_result.deployed_contract
 
     return _declare_deploy_v1
 
@@ -190,7 +206,7 @@ def do_single_bypass_multicall(init_starknet, init_pricing_contract):
                 ),
             )
         else:
-            exec_txn = await account.execute(calls=calls, max_fee=max_fee)
+            exec_txn = await account.execute_v1(calls=calls, max_fee=max_fee)
 
         await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
@@ -244,7 +260,7 @@ def do_double_bypass_multicall(init_starknet, init_pricing_contract):
                 ),
             )
         else:
-            exec_txn = await account.execute(calls=calls, max_fee=max_fee)
+            exec_txn = await account.execute_v1(calls=calls, max_fee=max_fee)
 
         await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
@@ -280,8 +296,8 @@ def do_bypass(init_starknet):
                 ),
             )
         else:
-            exec_txn = await account.execute(calls=transfer_bypass_call,
-                                             max_fee=max_fee)
+            exec_txn = await account.execute_v1(calls=transfer_bypass_call,
+                                                max_fee=max_fee)
         await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
         account.signer = temp
@@ -299,7 +315,7 @@ def set_and_assert_high_threshold(init_starknet):
             selector=get_selector_from_name("set_withdrawal_limit_high"),
             calldata=[high_threshold],
         )
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=set_withdrawal_limit_high_call,
             max_fee=int(0.1 * 10**18),
         )
@@ -327,7 +343,7 @@ def set_and_assert_low_threshold(init_starknet):
             selector=get_selector_from_name("set_withdrawal_limit_low"),
             calldata=[low_threshold],
         )
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=set_withdrawal_limit_low_call,
             max_fee=int(0.1 * 10**18),
         )
@@ -356,7 +372,7 @@ def generate_token(init_starknet, declare_deploy_v1):
                                       devnet_account,
                                       salt=salt)
         res: Contract
-        exec_tx = await devnet_account.execute(
+        exec_tx = await devnet_account.execute_v1(
             Call(
                 to_addr=res.address,
                 selector=get_selector_from_name("initialize"),
@@ -366,7 +382,7 @@ def generate_token(init_starknet, declare_deploy_v1):
         )
         await devnet_client.wait_for_tx(exec_tx.transaction_hash)
 
-        mint_tx = await devnet_account.execute(
+        mint_tx = await devnet_account.execute_v1(
             Call(
                 to_addr=res.address,
                 selector=get_selector_from_name("permissionedMint"),
@@ -401,10 +417,10 @@ async def init_account_factory(init_starknet, account_declare):
         salt=0,
         cairo_version=1,
     )
-    exec = await devnet_account.execute(deployment.call, auto_estimate=True)
+    exec = await devnet_account.execute_v1(deployment.call, auto_estimate=True)
     await devnet_client.wait_for_tx(exec.transaction_hash)
 
-    factory_init_txn = await devnet_account.execute(
+    factory_init_txn = await devnet_account.execute_v1(
         Call(
             to_addr=deployment.address,
             selector=get_selector_from_name('initializer'),
@@ -442,11 +458,11 @@ async def init_pricing_contract(init_starknet):
         salt=0,
         cairo_version=1,
     )
-    exec = await devnet_account.execute(deployment.call, auto_estimate=True)
+    exec = await devnet_account.execute_v1(deployment.call, auto_estimate=True)
     await devnet_client.wait_for_tx(exec.transaction_hash)
 
     # Setup pricing contract
-    exec = await devnet_account.execute(
+    exec = await devnet_account.execute_v1(
         Call(
             to_addr=deployment.address,
             selector=get_selector_from_name("initializer"),
@@ -464,7 +480,7 @@ async def init_pricing_contract(init_starknet):
     )
 
     # Upgrade to mock
-    exec = await devnet_account.execute(
+    exec = await devnet_account.execute_v1(
         Call(
             to_addr=deployment.address,
             selector=get_selector_from_name("upgrade"),
@@ -475,7 +491,7 @@ async def init_pricing_contract(init_starknet):
     await devnet_client.wait_for_tx(exec.transaction_hash)
 
     async def _set_price(pool_key, seconds_ago, price):
-        set_exec = await devnet_account.execute(
+        set_exec = await devnet_account.execute_v1(
             Call(
                 to_addr=deployment.address,
                 selector=get_selector_from_name("set_price_for_pool_key"),
@@ -540,12 +556,20 @@ async def sha256_cairo0_declare(init_starknet):
         compiled_contract_content = compiled_contract.read()
         chash = compute_class_hash(ContractClassSchema().loads(
             compiled_contract_content, unknown="exclude"))
-        declare_tx = await devnet_account.sign_declare_v1_transaction(
-            compiled_contract=compiled_contract_content,
-            max_fee=int(0.1 * 10**18),
-        )
-        decl = await devnet_client.declare(transaction=declare_tx)
-        await devnet_client.wait_for_tx(decl.transaction_hash)
+
+        class_exists = True
+        try:
+            await devnet_account.client.get_class_by_hash(chash)
+        except ClientError:
+            class_exists = False
+
+        if not class_exists:
+            declare_tx = await devnet_account.sign_declare_v1(
+                compiled_contract=compiled_contract_content,
+                max_fee=int(0.1 * 10**18),
+            )
+            decl = await devnet_client.declare(transaction=declare_tx)
+            await devnet_client.wait_for_tx(decl.transaction_hash)
         return chash
 
 
@@ -636,8 +660,7 @@ async def account_deployer(
                 common_fields=deploy_txn.get_common_fields(
                     tx_prefix=TransactionHashPrefix.DEPLOY_ACCOUNT,
                     address=address,
-                    chain_id=StarknetChainId.TESTNET,
-                ),
+                    chain_id=DEVNET_CHAIN_ID),
                 class_hash=deploy_txn.class_hash,
                 constructor_calldata=deploy_txn.constructor_calldata,
                 contract_address_salt=stark_keypair.public_key,
@@ -651,17 +674,11 @@ async def account_deployer(
                 max_fee=deploy_txn.max_fee,
                 nonce=deploy_txn.nonce,
                 salt=stark_keypair.public_key,
-                chain_id=StarknetChainId.TESTNET,
-            )
+                chain_id=DEVNET_CHAIN_ID)
         aux_hash = poseidon_hash_many([
-            account_chash,
-            strong_signer_type,
-            *secp256r1_signer,
-            multisig_threshold,
-            withdrawal_limit_low,
-            eth_fee_rate,
-            stark_fee_rate,
-            StarknetChainId.TESTNET,
+            account_chash, strong_signer_type, *secp256r1_signer,
+            multisig_threshold, withdrawal_limit_low, eth_fee_rate,
+            stark_fee_rate, DEVNET_CHAIN_ID
         ])
         ret = [
             *message_signature(deploy_txn_hash, stark_keypair.private_key),
@@ -672,7 +689,7 @@ async def account_deployer(
             withdrawal_limit_low,
             eth_fee_rate,
             stark_fee_rate,
-            StarknetChainId.TESTNET,
+            DEVNET_CHAIN_ID,
             *message_signature(aux_hash, stark_keypair.private_key),
         ]
         return ret
@@ -700,7 +717,7 @@ async def account_deployer(
         )
 
         for fee_token in [ETH_TOKEN_ADDRESS, utils_v2.STRK_ADDRESS]:
-            exec = await devnet_account.execute(
+            exec = await devnet_account.execute_v1(
                 Call(
                     to_addr=fee_token,
                     selector=get_selector_from_name("transfer"),
@@ -719,7 +736,7 @@ async def account_deployer(
         ] else 5 if is_webauthn else 2
 
         if erc20_address_to_transfer is not None:
-            exec = await devnet_account.execute(
+            exec = await devnet_account.execute_v1(
                 Call(
                     to_addr=erc20_address_to_transfer,
                     selector=get_selector_from_name("transfer"),
@@ -756,7 +773,7 @@ async def account_deployer(
         )
 
         if deploy_with_v3:
-            signed_account_depl = await deployer_account.sign_deploy_account_v3_transaction(
+            signed_account_depl = await deployer_account.sign_deploy_account_v3(
                 class_hash=base_account_chash,
                 contract_address_salt=stark_pubk,
                 constructor_calldata=ctor_calldata,
@@ -767,7 +784,7 @@ async def account_deployer(
                 # auto_estimate=True,
             )
         else:
-            signed_account_depl = await deployer_account.sign_deploy_account_v1_transaction(
+            signed_account_depl = await deployer_account.sign_deploy_account_v1(
                 class_hash=base_account_chash,
                 contract_address_salt=stark_pubk,
                 constructor_calldata=ctor_calldata,
@@ -776,14 +793,48 @@ async def account_deployer(
         account_depl = await devnet_client.deploy_account(signed_account_depl)
         await devnet_client.wait_for_tx(account_depl.transaction_hash)
 
-        return Account(
-            client=devnet_client,
-            address=account_address,
-            key_pair=stark_keypair,
-            chain=StarknetChainId.TESTNET,
-        ), account_depl.transaction_hash
+        return Account(client=devnet_client,
+                       address=account_address,
+                       key_pair=stark_keypair,
+                       chain=DEVNET_CHAIN_ID), account_depl.transaction_hash
 
     return _account_deployer
+
+
+@pytest_asyncio.fixture(scope="module")
+def get_spending_limit_amount_spent(init_starknet):
+
+    async def _get_spending_limit_amount_spent(account, session_hash,
+                                               token_address):
+        _, devnet_client, _ = init_starknet
+
+        low, _ = await devnet_client.call_contract(
+            Call(
+                to_addr=account.address,
+                selector=get_selector_from_name(
+                    "get_spending_limit_amount_spent"),
+                calldata=[session_hash, token_address],
+            ))
+        return low
+
+    return _get_spending_limit_amount_spent
+
+
+@pytest_asyncio.fixture(scope="module")
+def get_session_gas_spent(init_starknet):
+
+    async def _get_session_gas_spent(account, session_hash):
+        _, devnet_client, _ = init_starknet
+
+        res = await devnet_client.call_contract(
+            Call(
+                to_addr=account.address,
+                selector=get_selector_from_name("get_session_gas_spent"),
+                calldata=[session_hash],
+            ))
+        return res[0]
+
+    return _get_session_gas_spent
 
 
 @pytest_asyncio.fixture(scope="module")
@@ -835,7 +886,7 @@ def get_required_signer(init_starknet):
         orig_signer = account.signer
         if use_signer is not None:
             account.signer = use_signer
-        get_req_signer_txn = await account.sign_invoke_v1_transaction(
+        invoke_txn = await account.sign_invoke_v1(
             Call(
                 to_addr=account.address,
                 selector=get_selector_from_name("get_required_signer"),
@@ -852,6 +903,7 @@ def get_required_signer(init_starknet):
                 ]),
             max_fee=int(0.1 * 10**18),
         )
+        get_req_signer_txn = await account.sign_for_fee_estimate(invoke_txn)
         account.signer = orig_signer
         simul_res = await devnet_client.simulate_transactions(
             [get_req_signer_txn])
@@ -993,7 +1045,7 @@ def clean_token_config(init_starknet, init_pricing_contract):
             to_addr=account.address,
             selector=get_selector_from_name('update_rate_config'),
             calldata=call_data)
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=update_config_call,
             max_fee=int(0.1 * 10**18),
         )
@@ -1018,7 +1070,7 @@ async def add_signers(signers_types, multisig_threshold, account,
             selector=get_selector_from_name("add_secp256r1_signer"),
             calldata=[*secp256r1_pubk, signers_types[i], threshold],
         )
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=add_secp256r1_call,
             max_fee=10**17,
         )
@@ -1030,3 +1082,75 @@ async def add_signers(signers_types, multisig_threshold, account,
         if (len(signers) == 0):
             account.signer = signer
         signers.append(signer)
+
+
+@pytest.fixture(scope="module")
+def setup_session_account_env(init_starknet, account_deployer,
+                              set_and_assert_low_threshold,
+                              set_and_assert_high_threshold):
+    _, devnet_client, devnet_account = init_starknet
+
+    async def _setup_session_acount_env(is_gas_sponsored_session,
+                                        second_signer_type,
+                                        multisig_threshold,
+                                        existing_account=None,
+                                        withdrawal_limit_low=0,
+                                        withdrawal_limit_high=0,
+                                        stark_privk_input=None):
+
+        is_webauthn = second_signer_type == WEBAUTHN_SIGNER_TYPE
+        account = existing_account
+        if existing_account is None:
+            stark_privk = random.randint(
+                1, 10**10) if stark_privk_input is None else stark_privk_input
+            secp256r1_keypair = generate_secp256r1_keypair()
+            account, _ = await account_deployer(
+                stark_privk,
+                None if second_signer_type is None else flatten_seq(
+                    secp256r1_keypair[1]),
+                multisig_threshold,
+                is_webauthn=is_webauthn)
+            account: Account
+
+            account.signer = create_signer(stark_privk, second_signer_type,
+                                           secp256r1_keypair[0],
+                                           multisig_threshold)
+            account.secp256r1_keypair = secp256r1_keypair
+            if withdrawal_limit_low > 0:
+                await set_and_assert_low_threshold(withdrawal_limit_low,
+                                                   account)
+
+            if withdrawal_limit_high > 0:
+                await set_and_assert_high_threshold(withdrawal_limit_high,
+                                                    account)
+
+        session_request_builder = get_test_gas_sponsored_session_execution_object if is_gas_sponsored_session else get_test_session_execution_object
+
+        event_name = "GasSponsoredSessionStarted" if is_gas_sponsored_session else "SessionStarted"
+
+        session_owner_identifier = devnet_account.address if is_gas_sponsored_session else devnet_account.signer.public_key
+
+        dest_acc = Account(
+            address=ACCOUNTS[2].address,
+            client=devnet_client,
+            key_pair=KeyPair.from_private_key(ACCOUNTS[2].pk),
+            chain=DEVNET_CHAIN_ID,
+        )
+
+        async def execute_session_call(call, is_v3=True, max_fee=10**17):
+            if is_gas_sponsored_session:
+                return await execute_with_signer(devnet_account,
+                                                 call,
+                                                 devnet_account.signer,
+                                                 is_v3=is_v3,
+                                                 max_fee=max_fee)
+            else:
+                return await execute_with_signer(account,
+                                                 call,
+                                                 devnet_account.signer,
+                                                 is_v3=is_v3,
+                                                 max_fee=max_fee)
+
+        return account, execute_session_call, session_request_builder, event_name, session_owner_identifier, dest_acc
+
+    return _setup_session_acount_env

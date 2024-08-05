@@ -8,7 +8,7 @@ trait IBraavosBaseAccount<T> {
     // ISRC6 - does nothing in Base Account
     fn __validate__(ref self: T, calls: Array<Call>) -> felt252;
     fn __execute__(ref self: T, calls: Array<Call>) -> Array<Span<felt252>>;
-    // Deploy validation 
+    // Deploy validation
     fn __validate_deploy__(
         self: @T, class_hash: felt252, salt: felt252, stark_pub_key: StarkPubKey,
     ) -> felt252;
@@ -126,9 +126,10 @@ mod BraavosBaseAccount {
             ref self: ContractState, stark_pub_key: StarkPubKey, deployment_params: Span<felt252>
         ) {
             // This function does not limit itself to the factory address to prevent bricking by
-            // a malicous factory. A malicous factory could call the ctor without calling this function.
-            // Therefor we allow the init func to be called on a non initialized base account by the account
-            // itself or by any other 3rd party account
+            // a malicous factory. A malicous factory could call the ctor without calling this
+            // function.
+            // Therefor we allow the init func to be called on a non initialized base account by the
+            // account itself or by any other 3rd party account
             assert(
                 stark_pub_key.pub_key == self.initialization_stark_key.read().pub_key,
                 Errors::NO_REENTRANCE
@@ -155,8 +156,8 @@ mod BraavosBaseAccount {
             self.initialization_stark_key.write(StarkPubKey { pub_key: 0 });
         }
 
-        // We allow the base account contract to execute the initializer_from_factory call, this is validated
-        // in __validate__
+        // We allow the base account contract to execute the initializer_from_factory call, this is
+        // validated in __validate__
         fn __execute__(ref self: ContractState, calls: Array<Call>) -> Array<Span<felt252>> {
             let execution_info = get_execution_info_v2_syscall().unwrap_syscall().unbox();
             assert(execution_info.caller_address.is_zero(), Errors::NO_REENTRANCE);
@@ -165,10 +166,12 @@ mod BraavosBaseAccount {
             execute_calls(calls.span())
         }
 
-        // We perform strict validation on the call attempt to make sure only initializer_from_factory
-        // can be called in the scenario where a base account was constructed but initialization did not occur. 
-        // We validate that the tx was signed with the correct key set in ctor to prevent anyone else making calls
-        // that might fail during execute and drain the account (for example sending faulty deployment params)
+        // We perform strict validation on the call attempt to make sure only
+        // initializer_from_factory can be called in the scenario where a base account was
+        // constructed but initialization did not occur.
+        // We validate that the tx was signed with the correct key set in ctor to prevent anyone
+        // else making calls that might fail during execute and drain the account (for example
+        // sending faulty deployment params)
         fn __validate__(ref self: ContractState, calls: Array<Call>) -> felt252 {
             assert(
                 calls.len() == 1
@@ -188,7 +191,7 @@ mod BraavosBaseAccount {
                             .validate_signature(tx_info.transaction_hash, tx_info.signature)),
                 Errors::INVALID_TXN_SIG
             );
-            
+
             return starknet::VALIDATED;
         }
 

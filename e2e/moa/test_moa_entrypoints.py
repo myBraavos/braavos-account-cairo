@@ -74,8 +74,8 @@ async def test_external_entrypoint_guards(
                     selector=get_selector_from_name(entry["name"]),
                     calldata=[0] * params_num,
                 )
-                tx2 = await devnet_account.execute(calls=call,
-                                                   max_fee=MAX_EXECUTE_FEE_ETH)
+                tx2 = await devnet_account.execute_v1(
+                    calls=call, max_fee=MAX_EXECUTE_FEE_ETH)
                 await devnet_account.client.wait_for_tx(tx2.transaction_hash)
 
 
@@ -622,7 +622,7 @@ async def test_remove_and_add_external_signers(init_starknet,
             address=signer.account.address,
             client=signer.client,
             key_pair=utils_v2.KeyPair.from_private_key(ACCOUNTS[2].pk),
-            chain=utils_v2.StarknetChainId.TESTNET,
+            chain=DEVNET_CHAIN_ID,
         ))
     calls = utils_v2.get_transfer_calls(signer.address, ACCOUNTS[0].address,
                                         10**8)
@@ -802,7 +802,7 @@ async def test_regenesis_upgrade(
             salt=stark_pubk,
             constructor_calldata=ctor_calldata,
         )
-        exec = await devnet_account.execute(
+        exec = await devnet_account.execute_v1(
             Call(
                 to_addr=int(FEE_CONTRACT_ADDRESS, 16),
                 selector=get_selector_from_name("transfer"),
@@ -826,7 +826,7 @@ async def test_regenesis_upgrade(
             address=account_address,
             signer=deploy_signer,
         )
-        signed_account_depl = await deployer_account.sign_deploy_account_v1_transaction(
+        signed_account_depl = await deployer_account.sign_deploy_account_v1(
             class_hash=proxy_cairo0_chash,
             contract_address_salt=stark_pubk,
             constructor_calldata=ctor_calldata,
@@ -840,7 +840,7 @@ async def test_regenesis_upgrade(
             client=devnet_client,
             address=account_address,
             key_pair=KeyPair.from_private_key(stark_privk),
-            chain=StarknetChainId.TESTNET,
+            chain=DEVNET_CHAIN_ID,
         )
         await account.cairo_version
         if i == num_signers:

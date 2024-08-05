@@ -3,8 +3,9 @@ from e2e.utils.utils_v2 import MAX_EXECUTE_FEE_ETH, MAX_SIGN_FEE_ETH, MAX_EXECUT
 from e2e.utils.fixtures_moa import *
 
 import pytest
+import dataclasses
 
-from starknet_py.constants import FEE_CONTRACT_ADDRESS
+from starknet_py.constants import FEE_CONTRACT_ADDRESS, QUERY_VERSION_BASE
 from starknet_py.net.client_errors import ClientError
 from starknet_py.net.full_node_client import FullNodeClient
 from starknet_py.net.account.account import Account, KeyPair
@@ -65,7 +66,7 @@ async def test_deployment(init_starknet, account_deployer_moa, signer_ids,
             address=account.address,
             client=devnet_client,
             key_pair=KeyPair.from_private_key(ACCOUNTS[0].pk),
-            chain=StarknetChainId.TESTNET,
+            chain=DEVNET_CHAIN_ID,
         )
         assert await acc.cairo_version == 1, "wrong version"
         assert not expected_to_fail, "didn't fail"
@@ -93,7 +94,7 @@ async def test_deployment_with_duplicate_accounts(init_starknet,
     constructor_args = {"signers": [ext_acc, ext_acc], "threshold": 0}
 
     with pytest.raises((TransactionRevertedError, ClientError)):
-        deploy_result = await Contract.deploy_contract(
+        deploy_result = await Contract.deploy_contract_v1(
             account=devnet_account,
             class_hash=account_chash,
             abi=json.loads(account_sierra_str)["abi"],
@@ -1100,4 +1101,6 @@ async def test_estimate_fee_allow_invalid_sig(prepare_signer):
         max_fee=0,
     )
     invoke.signature.extend([0, 0, 0, 0, 0, 1, 0])
+    invoke = dataclasses.replace(invoke,
+                                 version=invoke.version + QUERY_VERSION_BASE)
     await signer.client.estimate_fee(invoke)

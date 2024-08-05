@@ -4,10 +4,15 @@ mod OutsideExecComponent {
     use braavos_account::outside_execution::hash::calculate_outside_execution_hash;
     use braavos_account::account::interface::IBraavosAccountInternal;
     use braavos_account::utils::utils::execute_calls;
+    use braavos_account::sessions::utils::is_session_revoke_transaction;
+    use braavos_account::utils::asserts::{
+        assert_self_caller, assert_no_self_calls, assert_timestamp
+    };
     use starknet::{
         ContractAddress, get_contract_address, get_caller_address, get_block_timestamp, get_tx_info
     };
     use starknet::account::Call;
+    use starknet::storage::Map;
 
     mod Errors {
         const SELF_CALL: felt252 = 'SELF_CALL';
@@ -19,7 +24,7 @@ mod OutsideExecComponent {
 
     #[storage]
     struct Storage {
-        outside_nonces: LegacyMap<felt252, bool>
+        outside_nonces: Map<felt252, bool>,
     }
 
     #[event]
@@ -39,8 +44,10 @@ mod OutsideExecComponent {
             signature: Span<felt252>
         ) -> Array<Span<felt252>> {
             validate_caller(outside_execution.caller);
-            validate_no_self_calls(outside_execution.calls);
-            let timestamp = validate_timestamp(
+            if !is_session_revoke_transaction(outside_execution.calls) {
+                assert_no_self_calls(outside_execution.calls);
+            }
+            let timestamp = assert_timestamp(
                 outside_execution.execute_after, outside_execution.execute_before
             );
             assert(
@@ -76,21 +83,5 @@ mod OutsideExecComponent {
         if caller.into() != 'ANY_CALLER' {
             assert(get_caller_address() == caller, Errors::INVALID_CALLER);
         }
-    }
-
-    fn validate_no_self_calls(mut calls: Span<Call>) {
-        let self_address = get_contract_address();
-        loop {
-            match calls.pop_front() {
-                Option::Some(call) => { assert(*call.to != self_address, Errors::SELF_CALL); },
-                Option::None(_) => { break; },
-            };
-        };
-    }
-
-    fn validate_timestamp(execute_after: u64, execute_before: u64) -> u64 {
-        let timestamp = get_block_timestamp();
-        assert(execute_after < timestamp && timestamp < execute_before, Errors::INVALID_TIMESTAMP);
-        timestamp
     }
 }

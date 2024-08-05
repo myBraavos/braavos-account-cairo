@@ -9,6 +9,7 @@ mod DailyTxnLimit {
     use braavos_account::transactions::interface::{
         DailyTxnLimitExternalTrait, DailyTxnLimitInternalTrait
     };
+    use starknet::storage::Map;
 
     mod Consts {
         const ACCOUNT_DAILY_TXN_LIMIT: usize = 24;
@@ -20,7 +21,7 @@ mod DailyTxnLimit {
 
     #[storage]
     struct Storage {
-        _signer_daily_txn_count: LegacyMap<(felt252, u64), usize>,
+        _signer_daily_txn_count: Map<(felt252, u64), usize>,
     }
 
     #[event]

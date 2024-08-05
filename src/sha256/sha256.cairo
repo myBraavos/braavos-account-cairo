@@ -1,10 +1,11 @@
 use core::traits::Into;
 use core::array::SpanTrait;
 use core::array::ArrayTrait;
-use integer::{u32_wrapping_add, BoundedInt};
+use core::num::traits::WrappingAdd;
+use core::num::traits::Bounded;
 
 fn ch(x: u32, y: u32, z: u32) -> u32 {
-    (x & y) ^ ((x ^ BoundedInt::<u32>::max().into()) & z)
+    (x & y) ^ ((x ^ Bounded::<u32>::MAX.into()) & z)
 }
 
 fn maj(x: u32, y: u32, z: u32) -> u32 {
@@ -16,7 +17,7 @@ fn bsig0(x: u32) -> u32 {
     let x1 = (x / 0x4) | (x * 0x40000000);
     let x2 = (x / 0x2000) | (x * 0x80000);
     let x3 = (x / 0x400000) | (x * 0x400);
-    let result = (x1 ^ x2 ^ x3) & BoundedInt::<u32>::max().into();
+    let result = (x1 ^ x2 ^ x3) & Bounded::<u32>::MAX.into();
     result.try_into().unwrap()
 }
 
@@ -25,7 +26,7 @@ fn bsig1(x: u32) -> u32 {
     let x1 = (x / 0x40) | (x * 0x4000000);
     let x2 = (x / 0x800) | (x * 0x200000);
     let x3 = (x / 0x2000000) | (x * 0x80);
-    let result = (x1 ^ x2 ^ x3) & BoundedInt::<u32>::max().into();
+    let result = (x1 ^ x2 ^ x3) & Bounded::<u32>::MAX.into();
     result.try_into().unwrap()
 }
 
@@ -34,7 +35,7 @@ fn ssig0(x: u32) -> u32 {
     let x1 = (x / 0x80) | (x * 0x2000000);
     let x2 = (x / 0x40000) | (x * 0x4000);
     let x3 = (x / 0x8);
-    let result = (x1 ^ x2 ^ x3) & BoundedInt::<u32>::max().into();
+    let result = (x1 ^ x2 ^ x3) & Bounded::<u32>::MAX.into();
     result.try_into().unwrap()
 }
 
@@ -43,7 +44,7 @@ fn ssig1(x: u32) -> u32 {
     let x1 = (x / 0x20000) | (x * 0x8000);
     let x2 = (x / 0x80000) | (x * 0x2000);
     let x3 = (x / 0x400);
-    let result = (x1 ^ x2 ^ x3) & BoundedInt::<u32>::max().into();
+    let result = (x1 ^ x2 ^ x3) & Bounded::<u32>::MAX.into();
     result.try_into().unwrap()
 }
 
@@ -114,14 +115,14 @@ fn sha256_inner(mut data: Span<u32>, i: usize, k: Span<u32>, mut h: Span<u32>) -
     let h2 = compression(w, 0, k, h);
 
     let mut t = array![];
-    t.append(u32_wrapping_add(*h[0], *h2[0]));
-    t.append(u32_wrapping_add(*h[1], *h2[1]));
-    t.append(u32_wrapping_add(*h[2], *h2[2]));
-    t.append(u32_wrapping_add(*h[3], *h2[3]));
-    t.append(u32_wrapping_add(*h[4], *h2[4]));
-    t.append(u32_wrapping_add(*h[5], *h2[5]));
-    t.append(u32_wrapping_add(*h[6], *h2[6]));
-    t.append(u32_wrapping_add(*h[7], *h2[7]));
+    t.append(WrappingAdd::wrapping_add(*h[0], *h2[0]));
+    t.append(WrappingAdd::wrapping_add(*h[1], *h2[1]));
+    t.append(WrappingAdd::wrapping_add(*h[2], *h2[2]));
+    t.append(WrappingAdd::wrapping_add(*h[3], *h2[3]));
+    t.append(WrappingAdd::wrapping_add(*h[4], *h2[4]));
+    t.append(WrappingAdd::wrapping_add(*h[5], *h2[5]));
+    t.append(WrappingAdd::wrapping_add(*h[6], *h2[6]));
+    t.append(WrappingAdd::wrapping_add(*h[7], *h2[7]));
     h = t.span();
     sha256_inner(data, i + 1, k, h)
 }
@@ -132,18 +133,21 @@ fn compression(w: Span<u32>, i: usize, k: Span<u32>, mut h: Span<u32>) -> Span<u
     }
     let s1 = bsig1(*h[4]);
     let ch = ch(*h[4], *h[5], *h[6]);
-    let temp1 = u32_wrapping_add(
-        u32_wrapping_add(u32_wrapping_add(u32_wrapping_add(*h[7], s1), ch), *k[i]), *w[i]
+    let temp1 = WrappingAdd::wrapping_add(
+        WrappingAdd::wrapping_add(
+            WrappingAdd::wrapping_add(WrappingAdd::wrapping_add(*h[7], s1), ch), *k[i]
+        ),
+        *w[i]
     );
     let s0 = bsig0(*h[0]);
     let maj = maj(*h[0], *h[1], *h[2]);
-    let temp2 = u32_wrapping_add(s0, maj);
+    let temp2 = WrappingAdd::wrapping_add(s0, maj);
     let mut t = array![];
-    t.append(u32_wrapping_add(temp1, temp2));
+    t.append(WrappingAdd::wrapping_add(temp1, temp2));
     t.append(*h[0]);
     t.append(*h[1]);
     t.append(*h[2]);
-    t.append(u32_wrapping_add(*h[3], temp1));
+    t.append(WrappingAdd::wrapping_add(*h[3], temp1));
     t.append(*h[4]);
     t.append(*h[5]);
     t.append(*h[6]);
@@ -168,8 +172,11 @@ fn create_message_schedule(data: Span<u32>, i: usize) -> Span<u32> {
         }
         let s0 = ssig0(*result[i - 15]);
         let s1 = ssig1(*result[i - 2]);
-        let res = u32_wrapping_add(
-            u32_wrapping_add(u32_wrapping_add(*result[i - 16], s0), *result[i - 7]), s1
+        let res = WrappingAdd::wrapping_add(
+            WrappingAdd::wrapping_add(
+                WrappingAdd::wrapping_add(*result[i - 16], s0), *result[i - 7]
+            ),
+            s1
         );
         result.append(res);
         i += 1;

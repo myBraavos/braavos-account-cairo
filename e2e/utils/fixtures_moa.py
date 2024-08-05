@@ -67,7 +67,7 @@ async def account_deployer_moa(init_starknet, account_declare_moa,
 
         constructor_args = {"signers": signers, "threshold": threshold}
 
-        deploy_result = await Contract.deploy_contract(
+        deploy_result = await Contract.deploy_contract_v1(
             account=devnet_account,
             class_hash=account_chash,
             abi=json.loads(account_sierra_str)["abi"],

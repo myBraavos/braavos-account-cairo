@@ -1,7 +1,7 @@
 from e2e.utils.utils import *
 from e2e.utils.utils_v2 import *
 from e2e.utils.fixtures import *
-from e2e.utils.typed_data import TypedDataR1
+from e2e.utils.typed_data import OutsideExecution, get_test_call
 
 import base64
 import json
@@ -12,13 +12,8 @@ from starknet_py.constants import FEE_CONTRACT_ADDRESS
 from starknet_py.net.client_models import Call
 from starknet_py.net.full_node_client import FullNodeClient
 from starknet_py.hash.selector import get_selector_from_name
-from starknet_py.utils.iterable import ensure_iterable
 from starknet_py.transaction_errors import TransactionRevertedError
-from starknet_py.net.account.account import (
-    Account,
-    _execute_payload_serializer_v2,
-    _parse_calls_v2,
-)
+from starknet_py.net.account.account import Account
 
 
 @pytest.mark.asyncio
@@ -273,12 +268,15 @@ async def test_external_entrypoints_assert_self(init_starknet,
         x[0] for x in external_entrypoints)
     entrypoint_coverage -= set(["execute_from_outside_v2"
                                 ])  # checked separately
+    entrypoint_coverage -= set(
+        ["execute_gas_sponsored_session_tx",
+         "revoke_session"])  # checked separately
     assert entrypoint_coverage == set(
     ), f"not all external entrypoints are covered {entrypoint_coverage}"
 
     for (entrypoint, num_params, error_message) in external_entrypoints:
         with pytest.raises(Exception, match=error_message):
-            await devnet_account.execute(
+            await devnet_account.execute_v1(
                 Call(
                     to_addr=account.address,
                     selector=get_selector_from_name(entrypoint),
@@ -286,14 +284,6 @@ async def test_external_entrypoints_assert_self(init_starknet,
                 ),
                 auto_estimate=True,
             )
-
-
-def get_transfer_call(address, transfer_amount):
-    return Call(
-        to_addr=int(FEE_CONTRACT_ADDRESS, 16),
-        selector=get_selector_from_name("transfer"),
-        calldata=[address, transfer_amount, 0],
-    )
 
 
 @pytest.mark.asyncio
@@ -311,7 +301,7 @@ async def test_set_execution_time_delay(
 
     # Fail on less than min etd
     with pytest.raises(Exception):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             Call(
                 to_addr=account.address,
                 selector=get_selector_from_name("set_execution_time_delay"),
@@ -322,7 +312,7 @@ async def test_set_execution_time_delay(
 
     # Fail on more than max etd
     with pytest.raises(Exception):
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             Call(
                 to_addr=account.address,
                 selector=get_selector_from_name("set_execution_time_delay"),
@@ -333,7 +323,7 @@ async def test_set_execution_time_delay(
 
     # Set a valid etd
     custom_etd = 365 * 24 * 60 * 60 - 1
-    exec_txn = await account.execute(
+    exec_txn = await account.execute_v1(
         Call(
             to_addr=account.address,
             selector=get_selector_from_name("set_execution_time_delay"),
@@ -349,117 +339,6 @@ async def test_set_execution_time_delay(
             calldata=[],
         )))[0]
     assert account_etd == custom_etd
-
-
-def get_transfer_call(address, transfer_amount):
-    return Call(
-        to_addr=int(FEE_CONTRACT_ADDRESS, 16),
-        selector=get_selector_from_name("transfer"),
-        calldata=[address, transfer_amount, 0],
-    )
-
-
-class OutsideExecution:
-
-    def __init__(
-        self,
-        caller: int = int.from_bytes(b"ANY_CALLER", byteorder="big"),
-        nonce=0,
-        execute_after=time.time() - 1000,
-        execute_before=time.time() + 1000,
-        calls: List[Call] = [get_transfer_call(0x1, 1)],
-    ):
-        self.caller = caller
-        self.nonce = nonce
-        self.execute_after = int(execute_after)
-        self.execute_before = int(execute_before)
-        self.calls = calls
-        self.sig = []
-        self.typed_data = TypedDataR1(
-            {
-                "OutsideExecution": [
-                    {
-                        "name": "Caller",
-                        "type": "ContractAddress"
-                    },
-                    {
-                        "name": "Nonce",
-                        "type": "felt"
-                    },
-                    {
-                        "name": "Execute After",
-                        "type": "u128"
-                    },
-                    {
-                        "name": "Execute Before",
-                        "type": "u128"
-                    },
-                    {
-                        "name": "Calls",
-                        "type": "Call*"
-                    },
-                ],
-                "Call": [
-                    {
-                        "name": "To",
-                        "type": "ContractAddress"
-                    },
-                    {
-                        "name": "Selector",
-                        "type": "selector"
-                    },
-                    {
-                        "name": "Calldata",
-                        "type": "felt*"
-                    },
-                ],
-            }, "Account.execute_from_outside", "2")
-
-    def get_hash(self, account_address):
-        message = {
-            "Caller": self.caller,
-            "Nonce": self.nonce,
-            "Execute After": self.execute_after,
-            "Execute Before": self.execute_before,
-            "Calls": parse_calls_for_typed_data(ensure_iterable(self.calls))
-        }
-        return self.typed_data.get_hash(message, account_address,
-                                        "OutsideExecution")
-
-    def get_serialized_calls(self):
-        parsed_calls = _parse_calls_v2(ensure_iterable(self.calls))
-        return _execute_payload_serializer_v2.serialize(
-            {"calls": parsed_calls})
-
-    def get_calldata(self):
-        return [
-            self.caller,
-            self.nonce,
-            self.execute_after,
-            self.execute_before,
-            *self.get_serialized_calls(),
-            len(self.sig),
-            *self.sig,
-        ]
-
-    def prepare_call(self, account_address):
-        return Call(
-            to_addr=account_address,
-            selector=get_selector_from_name("execute_from_outside_v2"),
-            calldata=self.get_calldata(),
-        )
-
-    def sign_stark(self, account_address, stark_privk):
-        self.sig.extend(
-            sign_hash_stark(self.get_hash(account_address), stark_privk))
-
-    def sign_ecc(self, account_address, ecc_key, signer_type):
-        if signer_type == SECP256R1_SIGNER_TYPE:
-            self.sig.extend(
-                sign_hash_secp256r1(self.get_hash(account_address), ecc_key))
-        elif signer_type == WEBAUTHN_SIGNER_TYPE:
-            self.sig.extend(
-                sign_hash_webauthn(self.get_hash(account_address), ecc_key))
 
 
 async def validate_outside_nonce(client, address, nonce, expected_res):
@@ -515,18 +394,21 @@ async def test_outside_execution(
             selector=get_selector_from_name("add_secp256r1_signer"),
             calldata=[*secp256r1_pubk, second_signer_type, multisig_threshold],
         )
-        exec_txn = await account.execute(
+        exec_txn = await account.execute_v1(
             calls=add_secp256r1_call,
             max_fee=10**17,
         )
         await devnet_client.wait_for_tx(exec_txn.transaction_hash)
 
+    account.signer = create_signer(stark_privk, second_signer_type,
+                                   secp256r1_keypair[0], multisig_threshold)
     transfer_amount = 123
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
     out_ex = OutsideExecution(
-        calls=[get_transfer_call(devnet_account.address, transfer_amount)],
+        account=account,
+        calls=[get_test_call(devnet_account.address, transfer_amount)],
         execute_before=block_timestamp + 3600,
         execute_after=block_timestamp - 3600)
 
@@ -535,11 +417,7 @@ async def test_outside_execution(
         FEE_CONTRACT_ADDRESS)
     await validate_outside_nonce(devnet_client, account.address, 0, 1)
 
-    if multisig_threshold == 2 or second_signer_type == None:
-        out_ex.sign_stark(account.address, stark_privk)
-    out_ex.sign_ecc(account.address, secp256r1_keypair[0], second_signer_type)
-
-    tx = await devnet_account.execute(
+    tx = await devnet_account.execute_v1(
         out_ex.prepare_call(account.address),
         max_fee=10**17,
     )
@@ -603,13 +481,11 @@ async def test_outside_execution_with_invalid_params(init_starknet,
     account, _ = await account_deployer(stark_privk, None, 0)
     account: Account
 
-    out_ex = OutsideExecution(**invalid_params)
-
-    out_ex.sign_stark(account.address, stark_privk)
+    out_ex = OutsideExecution(account=account, **invalid_params)
 
     with pytest.raises(TransactionRevertedError,
                        match=encode_string_as_hex(expected_error)):
-        tx = await devnet_account.execute(
+        tx = await devnet_account.execute_v1(
             out_ex.prepare_call(account.address),
             max_fee=10**17,
         )
@@ -629,28 +505,28 @@ async def test_outside_execution_nonce_reuse(init_starknet, account_deployer):
     block_timestamp = block.timestamp
 
     out_ex1 = OutsideExecution(
-        calls=[get_transfer_call(devnet_account.address, 1)],
+        account=account,
+        calls=[get_test_call(devnet_account.address, 1)],
         nonce=123,
         execute_before=block_timestamp + 3600,
         execute_after=block_timestamp - 3600)
-    out_ex1.sign_stark(account.address, stark_privk)
 
-    tx = await devnet_account.execute(
+    tx = await devnet_account.execute_v1(
         out_ex1.prepare_call(account.address),
         max_fee=10**17,
     )
     await devnet_client.wait_for_tx(tx.transaction_hash)
 
     out_ex2 = OutsideExecution(
-        calls=[get_transfer_call(devnet_account.address, 2)],
+        account=account,
+        calls=[get_test_call(devnet_account.address, 2)],
         nonce=123,
         execute_before=block_timestamp + 3600,
         execute_after=block_timestamp - 3600)
-    out_ex2.sign_stark(account.address, stark_privk)
 
     with pytest.raises(TransactionRevertedError,
                        match=encode_string_as_hex("INVALID_NONCE")):
-        tx = await devnet_account.execute(
+        tx = await devnet_account.execute_v1(
             out_ex2.prepare_call(account.address),
             max_fee=10**17,
         )
@@ -668,14 +544,15 @@ async def test_outside_execution_empty_sig(init_starknet, account_deployer):
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    out_ex = OutsideExecution(
-        calls=[get_transfer_call(devnet_account.address, 1)],
-        execute_before=block_timestamp + 3600,
-        execute_after=block_timestamp - 3600)
+    out_ex = OutsideExecution(account=account,
+                              calls=[get_test_call(devnet_account.address, 1)],
+                              execute_before=block_timestamp + 3600,
+                              execute_after=block_timestamp - 3600)
+    out_ex.sig = []
 
     with pytest.raises(TransactionRevertedError,
                        match=encode_string_as_hex("INVALID_SIG")):
-        tx = await devnet_account.execute(
+        tx = await devnet_account.execute_v1(
             out_ex.prepare_call(account.address),
             max_fee=10**17,
         )
@@ -693,16 +570,15 @@ async def test_outside_execution_invalid_sig(init_starknet, account_deployer):
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    out_ex = OutsideExecution(
-        calls=[get_transfer_call(devnet_account.address, 1)],
-        execute_before=block_timestamp + 3600,
-        execute_after=block_timestamp - 3600)
-    out_ex.sign_stark(account.address, stark_privk)
+    out_ex = OutsideExecution(account=account,
+                              calls=[get_test_call(devnet_account.address, 1)],
+                              execute_before=block_timestamp + 3600,
+                              execute_after=block_timestamp - 3600)
     out_ex.sig[1] += 1
 
     with pytest.raises(TransactionRevertedError,
                        match=encode_string_as_hex("INVALID_SIG")):
-        tx = await devnet_account.execute(
+        tx = await devnet_account.execute_v1(
             out_ex.prepare_call(account.address),
             max_fee=10**17,
         )
@@ -720,20 +596,21 @@ async def test_outside_execution_self_call(init_starknet, account_deployer):
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    out_ex = OutsideExecution(calls=[
-        Call(
-            to_addr=account.address,
-            selector=get_selector_from_name("get_version"),
-            calldata=[],
-        )
-    ],
-                              execute_before=block_timestamp + 3600,
-                              execute_after=block_timestamp - 3600)
-    out_ex.sign_stark(account.address, stark_privk)
+    out_ex = OutsideExecution(
+        account=account,
+        calls=[
+            Call(
+                to_addr=account.address,
+                selector=get_selector_from_name("get_version"),
+                calldata=[],
+            )
+        ],
+        execute_before=block_timestamp + 3600,
+        execute_after=block_timestamp - 3600)
 
     with pytest.raises(TransactionRevertedError,
                        match=encode_string_as_hex("SELF_CALL")):
-        tx = await devnet_account.execute(
+        tx = await devnet_account.execute_v1(
             out_ex.prepare_call(account.address),
             max_fee=10**17,
         )

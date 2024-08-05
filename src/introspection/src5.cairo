@@ -27,9 +27,10 @@ mod SRC5Component {
     impl ExternalImpl<
         TContractState, +HasComponent<TContractState>
     > of ISRC5WithCamelCase<ComponentState<TContractState>> {
-        // Deprecated: used for backwards compatibility with Cairo 0 convention - remove after regenesis
+        // Deprecated: used for backwards compatibility with Cairo 0 convention - remove after
+        // regenesis
         fn supportsInterface(self: @ComponentState<TContractState>, interfaceId: felt252) -> bool {
-            ExternalImpl::supports_interface(self, interfaceId)
+            Self::supports_interface(self, interfaceId)
         }
 
         fn supports_interface(
@@ -49,9 +50,10 @@ mod SRC5Component {
     impl ExternalMOAImpl<
         TContractState, +HasComponent<TContractState>
     > of ISRC5WithCamelCase<ComponentState<TContractState>> {
-        // Deprecated: used for backwards compatibility with Cairo 0 convention - remove after regenesis
+        // Deprecated: used for backwards compatibility with Cairo 0 convention - remove after
+        // regenesis
         fn supportsInterface(self: @ComponentState<TContractState>, interfaceId: felt252) -> bool {
-            ExternalMOAImpl::supports_interface(self, interfaceId)
+            Self::supports_interface(self, interfaceId)
         }
 
         fn supports_interface(
