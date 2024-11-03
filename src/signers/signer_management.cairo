@@ -64,7 +64,6 @@ mod SignerManagementComponent {
     struct Storage {
         deferred_remove_signer_req: DeferredRemoveSignerRequest,
         deferred_req_time_delay: u64,
-        signer_change_index: u64,
     }
 
     #[event]
@@ -77,26 +76,10 @@ mod SignerManagementComponent {
         DeferredRemoveSignerRequestExpired: DeferredRemoveSignerRequestExpired,
     }
 
-
     fn _is_deferred_req_expired(
         deferred_req: DeferredRemoveSignerRequest, block_timestamp: u64
     ) -> bool {
         deferred_req.expire_at != 0 && deferred_req.expire_at < block_timestamp
-    }
-
-    #[embeddable_as(SignerChangeManagementInternal)]
-    impl SignerChangeManagementInternalImpl<
-        TContractState, +HasComponent<TContractState>, +Drop<TContractState>,
-    > of interface::ISignerChangeManagementInternalImpl<ComponentState<TContractState>> {
-        #[inline(always)]
-        fn _increment_signer_change_index(ref self: ComponentState<TContractState>) {
-            self.signer_change_index.write(self.signer_change_index.read() + 1);
-        }
-
-        #[inline(always)]
-        fn _get_signer_change_index(self: @ComponentState<TContractState>) -> u64 {
-            self.signer_change_index.read()
-        }
     }
 
     #[embeddable_as(SignerManagementImplInternal)]
@@ -121,8 +104,6 @@ mod SignerManagementComponent {
                         signer_data: array![].span(),
                     }
                 );
-
-            self._increment_signer_change_index();
         }
 
         /// Adds strong secp256r1 signer to storage
@@ -147,7 +128,6 @@ mod SignerManagementComponent {
                             .span(),
                     }
                 );
-            self._increment_signer_change_index();
         }
 
         /// When removing signer not as an etd endpoint this function will remove existing
@@ -188,7 +168,6 @@ mod SignerManagementComponent {
                     }
                 );
             self._handle_deferred_request_when_signer_removal(expired_etd);
-            self._increment_signer_change_index();
         }
 
         /// Removes all strong signers from account
@@ -228,7 +207,6 @@ mod SignerManagementComponent {
             };
 
             self._handle_deferred_request_when_signer_removal(expired_etd);
-            self._increment_signer_change_index();
         }
 
         /// Checks whether a deferred signer removal request has expired and if so removes all

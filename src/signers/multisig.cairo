@@ -52,7 +52,6 @@ mod MultisigComponent {
         +HasComponent<TContractState>,
         +Drop<TContractState>,
         +IDwlInternal<TContractState>,
-        +interface::ISignerChangeManagementInternalImpl<TContractState>,
     > of interface::IMultisig<ComponentState<TContractState>> {
         /// Sets the value of multisig threshold in storage. If a value is over 1 then
         /// the user would need two or more signers to sign a transaction.
@@ -74,7 +73,6 @@ mod MultisigComponent {
             if multisig_threshold == 0 && mut_contract._get_withdrawal_limit_high_inner() != 0 {
                 mut_contract._set_withdrawal_limit_high_inner(0, 0, 0, false, false);
             }
-            mut_contract._increment_signer_change_index();
         }
 
         fn get_multisig_threshold(self: @ComponentState<TContractState>) -> usize {

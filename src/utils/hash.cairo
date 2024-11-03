@@ -31,11 +31,14 @@ fn sha256_u32(mut data: Array<u32>, last_word: u32, padding: u32) -> Span<felt25
         .span()
 }
 
-/// This function has the same purpose as core::sha256::panic_with_felt252 but 
+/// This function has the same purpose as core::sha256::panic_with_felt252 but
 /// is optimized to our input format. The padding is defined as follows:
 /// 1. Append a single bit with value 1 to the end of the array.
-/// 2. Append zeros until the length of the array is 448 mod 512.
-/// 3. Append the length of the array in bits as a 64-bit number.
+/// 2. Append zeros until the length of the array is 480 mod 512.
+/// 3. Append the length of the array in bits as a 32-bit number.
+/// Note: This implementation is based on cairo core lib's implementation but
+/// differs from the standard which specifies that the length should be a
+/// 64-bit number.
 fn add_sha256_padded_input(ref data: Array<u32>, last_word: u32, padding: u32) {
     let input_len = data.len() + 1;
     if padding == 0 {

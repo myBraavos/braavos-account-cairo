@@ -3,6 +3,7 @@ mod SessionComponent {
     use core::option::OptionTrait;
     use core::traits::TryInto;
     use core::dict::Felt252Dict;
+    use core::integer::U256Zeroable;
     use braavos_account::sessions::interface::{
         ISessionExecute, ISessionManagement, SessionExecuteRequest, IGasSponsoredSessionExecute,
         GasSponsoredSessionStarted, GasSponsoredSessionExecutionRequest, ISessionExecuteInternal,
@@ -16,9 +17,13 @@ mod SessionComponent {
         calculate_gas_sponsored_session_execution_hash, calculate_session_execute_hash
     };
     use braavos_account::utils::utils::{execute_calls, extract_fee_from_tx};
-    use braavos_account::sessions::utils::{is_erc20_token_removal_call, validate_allowed_methods};
+    use braavos_account::sessions::utils::{
+        is_erc20_token_removal_call, validate_allowed_methods, is_dai_transfer_from_itself_call
+    };
+    use braavos_account::signers::signer_address_mgt::get_signers;
+    use braavos_account::signers::interface::IMultisig;
+    use poseidon::poseidon_hash_span;
     use braavos_account::signers::signers::{StarkPubKey, StarkSignerMethods};
-    use braavos_account::signers::interface::ISignerChangeManagementInternalImpl;
     use starknet::{
         ContractAddress, get_contract_address, get_caller_address, get_block_timestamp, get_tx_info,
         TxInfo
@@ -30,7 +35,7 @@ mod SessionComponent {
     #[storage]
     struct Storage {
         revocations: Map<felt252, bool>,
-        validated_sessions: Map<(felt252, u64), bool>,
+        validated_sessions: Map<(felt252, felt252), bool>,
         validated_sessions_strk_gas_spent: Map<felt252, u128>,
         session_token_spent: Map<(felt252, ContractAddress), u256>
     }
@@ -58,7 +63,7 @@ mod SessionComponent {
         TContractState,
         +HasComponent<TContractState>,
         +Drop<TContractState>,
-        +ISignerChangeManagementInternalImpl<TContractState>,
+        +IMultisig<TContractState>,
     > of ISessionManagement<ComponentState<TContractState>> {
         fn revoke_session(ref self: ComponentState<TContractState>, session_hash: felt252) {
             assert_self_caller();
@@ -89,8 +94,7 @@ mod SessionComponent {
         fn is_session_validated(
             self: @ComponentState<TContractState>, session_hash: felt252
         ) -> bool {
-            let contract = self.get_contract();
-            self.validated_sessions.read((session_hash, contract._get_signer_change_index()))
+            self.validated_sessions.read((session_hash, self._get_signer_state_hash()))
         }
     }
 
@@ -111,7 +115,7 @@ mod SessionComponent {
         TContractState,
         +HasComponent<TContractState>,
         +IBraavosAccountInternal<TContractState>,
-        +ISignerChangeManagementInternalImpl<TContractState>,
+        +IMultisig<TContractState>,
         +Drop<TContractState>,
     > of ISessionExecuteInternal<ComponentState<TContractState>> {
         // This function validates inside sessions during the __validate__. It validates the
@@ -182,10 +186,12 @@ mod SessionComponent {
             let session_stark_owner = StarkPubKey {
                 pub_key: session_execute_request.session_request.owner_pub_key
             };
+
+            // Note: Potential gas issue in fee market conditions, will fix in future release
             assert(session_stark_owner.validate_signature(hash, signature), Errors::INVALID_SIG);
 
             if (!is_execute_session_validated) {
-                self.cache_session(session_hash);
+                self._cache_session(session_hash);
                 self
                     .emit(
                         SessionStarted {
@@ -225,10 +231,9 @@ mod SessionComponent {
 
     impl SessionHelperImpl<
         TContractState,
+        +IMultisig<TContractState>,
         +HasComponent<TContractState>,
-        +IBraavosAccountInternal<TContractState>,
         +Drop<TContractState>,
-        +ISignerChangeManagementInternalImpl<TContractState>,
     > of ISessionHelper<ComponentState<TContractState>> {
         // This function is responsible to validate that token spending in the context
         // of this session are not larger than the allowed amounts specified in the spending limit
@@ -265,23 +270,35 @@ mod SessionComponent {
                 match calls.pop_front() {
                     Option::Some(call) => {
                         let token_spending_tracker = spending_tracker.get((*call.to).into());
-                        if !token_spending_tracker.is_null() && is_erc20_token_removal_call(call) {
+                        if !token_spending_tracker.is_null() {
                             let calldata = *call.calldata;
-                            let erc20_amount = u256 {
-                                low: (*(calldata).at(1)).try_into().unwrap(),
-                                high: (*(calldata).at(2)).try_into().unwrap()
+                            let erc20_amount = if is_erc20_token_removal_call(call) {
+                                u256 {
+                                    low: (*(calldata).at(1)).try_into().unwrap(),
+                                    high: (*(calldata).at(2)).try_into().unwrap()
+                                }
+                            } else if is_dai_transfer_from_itself_call(call) {
+                                u256 {
+                                    low: (*(calldata).at(2)).try_into().unwrap(),
+                                    high: (*(calldata).at(3)).try_into().unwrap()
+                                }
+                            } else {
+                                U256Zeroable::zero()
                             };
-                            let (spent_amount, spending_limit) = token_spending_tracker.deref();
-                            assert(
-                                erc20_amount + spent_amount <= spending_limit, Errors::BAD_SPENDING
-                            );
-                            spending_tracker
-                                .insert(
-                                    (*call.to).into(),
-                                    NullableTrait::new(
-                                        (erc20_amount + spent_amount, spending_limit)
-                                    )
+                            if !U256Zeroable::is_zero(erc20_amount) {
+                                let (spent_amount, spending_limit) = token_spending_tracker.deref();
+                                assert(
+                                    erc20_amount + spent_amount <= spending_limit,
+                                    Errors::BAD_SPENDING
                                 );
+                                spending_tracker
+                                    .insert(
+                                        (*call.to).into(),
+                                        NullableTrait::new(
+                                            (erc20_amount + spent_amount, spending_limit)
+                                        )
+                                    );
+                            }
                         }
                     },
                     Option::None(_) => { break; },
@@ -314,11 +331,18 @@ mod SessionComponent {
             self.validated_sessions_strk_gas_spent.write(session_hash, gas_spent);
         }
 
-        fn cache_session(ref self: ComponentState<TContractState>, session_hash: felt252) {
-            let contract = self.get_contract();
-            self
-                .validated_sessions
-                .write((session_hash, contract._get_signer_change_index()), true);
+        fn _cache_session(ref self: ComponentState<TContractState>, session_hash: felt252) {
+            self.validated_sessions.write((session_hash, self._get_signer_state_hash()), true);
+        }
+
+        fn _get_signer_state_hash(self: @ComponentState<TContractState>) -> felt252 {
+            let signer_state = get_signers();
+            let mut signer_guids: Array<felt252> = array![];
+            signer_guids.append(self.get_contract().get_multisig_threshold().into());
+            signer_guids.append_span(signer_state.stark.span());
+            signer_guids.append_span(signer_state.secp256r1.span());
+            signer_guids.append_span(signer_state.webauthn.span());
+            poseidon_hash_span(signer_guids.span())
         }
     }
 
@@ -327,7 +351,7 @@ mod SessionComponent {
         TContractState,
         +HasComponent<TContractState>,
         +IBraavosAccountInternal<TContractState>,
-        +ISignerChangeManagementInternalImpl<TContractState>,
+        +IMultisig<TContractState>,
         +Drop<TContractState>,
     > of IGasSponsoredSessionExecute<ComponentState<TContractState>> {
         // This function validates and executes outside execution session transactions. It validates
@@ -377,7 +401,7 @@ mod SessionComponent {
             );
 
             if (!is_session_validated) {
-                self.cache_session(session_hash);
+                self._cache_session(session_hash);
                 self
                     .emit(
                         GasSponsoredSessionStarted {

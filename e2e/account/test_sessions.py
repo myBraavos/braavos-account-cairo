@@ -571,11 +571,9 @@ async def test_session_execution_revoke(init_starknet, account_deployer,
             get_selector_from_name("SessionRevoked"),
             oe.get_hash(session_account.address)
         ],
-        [
-        ],
+        [],
         match_data=True,
     ) is True, "no execute session revoked event"
-
 
     with pytest.raises((TransactionRevertedError, ClientError),
                        match=encode_string_as_hex("SESSION_REVOKED")):
@@ -1086,12 +1084,14 @@ async def test_session_gas_limit_overload(
 @pytest.mark.parametrize("is_gas_sponsored_execution", [False, True])
 @pytest.mark.parametrize("is_after_cache", [False, True])
 @pytest.mark.parametrize("is_fail_on_high_u256", [False, True])
-async def test_session_spending_limits(init_starknet, account_deployer,
-                                       usdc_token, setup_session_account_env,
-                                       get_spending_limit_amount_spent,
-                                       second_signer_type, multisig_threshold,
-                                       is_gas_sponsored_execution,
-                                       is_after_cache, is_fail_on_high_u256):
+@pytest.mark.parametrize("dai_address", [DAIV0_ADDRESS, DAIV2_ADDRESS])
+@pytest.mark.parametrize("dai_transfer_from_entrypoint",
+                         ["transfer_from", "transferFrom"])
+async def test_session_spending_limits(
+        init_starknet, account_deployer, usdc_token, setup_session_account_env,
+        get_spending_limit_amount_spent, second_signer_type,
+        multisig_threshold, is_gas_sponsored_execution, is_after_cache,
+        is_fail_on_high_u256, dai_address, dai_transfer_from_entrypoint):
     devnet_url, devnet_client, devnet_account = init_starknet
 
     session_account, execute_session_call, session_request_builder, _, session_owner_identifier, destination_account = await setup_session_account_env(
@@ -1125,18 +1125,23 @@ async def test_session_spending_limits(init_starknet, account_deployer,
                  selector=get_selector_from_name(name),
                  calldata=[]) for name in relevant_erc20_entrypoints +
             relevant_snake_erc20_entrypoints
-        ], *[
+        ],
+        *[
             Call(to_addr=usdc_token.address,
                  selector=get_selector_from_name(name),
                  calldata=[]) for name in relevant_erc20_entrypoints
         ],
         Call(to_addr=int(FEE_CONTRACT_ADDRESS, 16),
              selector=get_selector_from_name("transfer"),
-             calldata=[])
+             calldata=[]),
+        Call(to_addr=dai_address,
+             selector=get_selector_from_name(dai_transfer_from_entrypoint),
+             calldata=[]),
     ]
 
     spending_limits = [[STRK_ADDRESS, 5 * 10**18],
-                       [usdc_token.address, 5 * 10**18]]
+                       [usdc_token.address, 5 * 10**18],
+                       [dai_address, 5 * 10**18]]
 
     oe = session_request_builder(session_account,
                                  session_owner_identifier,
@@ -1262,6 +1267,56 @@ async def test_session_spending_limits(init_starknet, account_deployer,
     await devnet_client.wait_for_tx(tx.transaction_hash)
     balance_after = await destination_account.get_balance(FEE_CONTRACT_ADDRESS)
 
+    # check dai
+    with pytest.raises((ClientError, TransactionRevertedError),
+                       match=encode_string_as_hex("BAD_SPENDING")):
+        tx = await execute_session_call(
+            oe.prepare_call([
+                Call(to_addr=dai_address,
+                     selector=get_selector_from_name(
+                         dai_transfer_from_entrypoint),
+                     calldata=[
+                         session_account.address, destination_account.address,
+                         2 * 10**18, 0
+                     ]),
+                Call(to_addr=dai_address,
+                     selector=get_selector_from_name(
+                         dai_transfer_from_entrypoint),
+                     calldata=[
+                         session_account.address, destination_account.address,
+                         2 * 10**18, 0
+                     ]),
+                Call(to_addr=dai_address,
+                     selector=get_selector_from_name(
+                         dai_transfer_from_entrypoint),
+                     calldata=[
+                         session_account.address, destination_account.address,
+                         2 * 10**18, 0
+                     ]),
+            ], session_account.address))
+        await devnet_client.wait_for_tx(tx.transaction_hash)
+
+    with pytest.raises((ClientError, TransactionRevertedError),
+                       match="is not deployed"):
+        tx = await execute_session_call(
+            oe.prepare_call([
+                Call(to_addr=dai_address,
+                     selector=get_selector_from_name(
+                         dai_transfer_from_entrypoint),
+                     calldata=[
+                         session_account.address, destination_account.address,
+                         2 * 10**18, 0
+                     ]),
+                Call(to_addr=dai_address,
+                     selector=get_selector_from_name(
+                         dai_transfer_from_entrypoint),
+                     calldata=[
+                         session_account.address, destination_account.address,
+                         2 * 10**18, 0
+                     ]),
+            ], session_account.address))
+        await devnet_client.wait_for_tx(tx.transaction_hash)
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_after_cache", [False, True])
@@ -1312,8 +1367,7 @@ async def test_session_revoke_via_outside_execution(
             get_selector_from_name("SessionRevoked"),
             oe.get_hash(session_account.address)
         ],
-        [
-        ],
+        [],
         match_data=True,
     ) is True, "no execute session revoked event"
 

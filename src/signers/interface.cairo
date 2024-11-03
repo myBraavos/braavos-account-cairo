@@ -104,9 +104,3 @@ trait IMoaSignManagementInternal<TState> {
     fn _update_threshold(ref self: TState, threshold: usize, num_signers: usize);
     fn _add_signers(ref self: TState, signers: Array<(ContractAddress, felt252)>, threshold: usize);
 }
-
-#[starknet::interface]
-trait ISignerChangeManagementInternalImpl<TState> {
-    fn _increment_signer_change_index(ref self: TState);
-    fn _get_signer_change_index(self: @TState) -> u64;
-}

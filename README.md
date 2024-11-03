@@ -3,9 +3,9 @@
 For the Braavos Multi Owner Account (MOA) please refer to [README_MOA.md](./README_MOA.md)
 
 #### Class Hashes
-*Braavos Account* - `0x0490f94ad4baeb8bb447007aa96ca7f2203500e4eb3255d82e47f23b1b9aaf6d`
+*Braavos Account* - `0x02c8c7e6fbcfb3e8e15a46648e8914c6aa1fc506fc1e7fb3d1e19630716174bc`
 
-*Braavos Base Account* - `0x05b054b2ce377e9b07cd26be44638511bc43d2c0c2b263a078d836f92d22a9c1`
+*Braavos Base Account* - `0x03d16c7a9a60b0593bd202f660a28c5d76e0403601d9ccc7e4fa253b6a70c201`
 
 ## Architecture
 
@@ -112,7 +112,7 @@ This feature is intended to allow different protocols to submit transactions on 
 
 ### Build
 
-This repo is built using [Scarb v2.5.1](https://docs.swmansion.com/scarb/). After installation, run:
+This repo is built using [Scarb v2.8.4](https://docs.swmansion.com/scarb/). After installation, run:
 > scarb build
 
 ### Tests
@@ -122,6 +122,7 @@ Prerequisites:
 > pip install -r requirements.txt
 2. Setup [starknet-devnet-rs](https://github.com/0xSpaceShard/starknet-devnet-rs)
 3. Define `STARKNET_DEVNET` env variable to point to `starknet-devnet-rs` executable
+4. Define `STARKNET_PY_MARSHMALLOW_UNKNOWN_EXCLUDE` env variable to have the value `true`
 
 To run tests:
 >

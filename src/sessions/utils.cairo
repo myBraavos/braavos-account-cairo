@@ -4,7 +4,6 @@ use starknet::get_contract_address;
 use core::dict::Felt252Dict;
 use braavos_account::sessions::hash::hash_allowed_method;
 
-
 mod Errors {
     const BAD_CALL_HINT: felt252 = 'BAD_CALL_HINT';
     const BAD_CALL: felt252 = 'BAD_CALL';
@@ -17,6 +16,12 @@ mod Consts {
     const APPROVE_CALL_SELECTOR: felt252 = selector!("approve");
     const INCREASE_ALLOWANCE_CALL_SELECTOR: felt252 = selector!("increase_allowance");
     const INCREASE_ALLOWANCE_CAMEL_CALL_SELECTOR: felt252 = selector!("increaseAllowance");
+    const TRANSFER_FROM_CALL_SELECTOR: felt252 = selector!("transfer_from");
+    const TRANSFER_FROM_CAMEL_CALL_SELECTOR: felt252 = selector!("transferFrom");
+    const DAI_MAINNET_V0_ADDRESS: felt252 =
+        0x00da114221cb83fa859dbdb4c44beeaa0bb37c7537ad5ae66fe5e0efd20e6eb3;
+    const DAI_MAINNET_V2_ADDRESS: felt252 =
+        0x05574eb6b8789a91466f902c380d978e472db68170ff82a5b650b95a58ddf4ad;
 }
 
 fn validate_allowed_methods(
@@ -53,6 +58,16 @@ fn is_erc20_token_removal_call(call: @Call) -> bool {
         || *call.selector == Consts::INCREASE_ALLOWANCE_CALL_SELECTOR
         || *call.selector == Consts::INCREASE_ALLOWANCE_CAMEL_CALL_SELECTOR)
         && (*call.calldata).len() == 3
+}
+
+fn is_dai_transfer_from_itself_call(call: @Call) -> bool {
+    let calldata = *call.calldata;
+    ((*call.to).into() == Consts::DAI_MAINNET_V0_ADDRESS
+        || (*call.to).into() == Consts::DAI_MAINNET_V2_ADDRESS)
+        && (*(calldata.at(0)) == get_contract_address().into())
+        && (*call.selector == Consts::TRANSFER_FROM_CALL_SELECTOR
+            || *call.selector == Consts::TRANSFER_FROM_CAMEL_CALL_SELECTOR)
+        && (*call.calldata).len() == 4
 }
 
 fn is_session_revoke_transaction(calls: Span<Call>) -> bool {

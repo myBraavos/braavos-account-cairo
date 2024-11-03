@@ -72,7 +72,8 @@ trait ISessionHelper<TContractState> {
     fn _validate_gas_spending(
         ref self: TContractState, session_hash: felt252, fee: u128, request_gas_limit: u128
     );
-    fn cache_session(ref self: TContractState, session_hash: felt252);
+    fn _cache_session(ref self: TContractState, session_hash: felt252);
+    fn _get_signer_state_hash(self: @TContractState) -> felt252;
 }
 
 #[derive(Drop, starknet::Event)]

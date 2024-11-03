@@ -80,8 +80,6 @@ mod BraavosAccount {
         SignerManagementComponent::SignerManagementImpl<ContractState>;
     impl SignerManagementImplInternal =
         SignerManagementComponent::SignerManagementImplInternal<ContractState>;
-    impl SignerChangeManagementInternalImpl =
-        SignerManagementComponent::SignerChangeManagementInternal<ContractState>;
 
     // Multisig
     component!(path: MultisigComponent, storage: multisig, event: MultisigEvt);
