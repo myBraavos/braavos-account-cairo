@@ -12,7 +12,7 @@ import random
 from e2e.utils.utils import *
 import e2e.utils.utils_v2 as utils_v2
 from e2e.utils.utils_v2 import ACCOUNTS
-from e2e.utils.typed_data import get_test_gas_sponsored_session_execution_object, get_test_session_execution_object
+from e2e.utils.typed_data import get_test_gas_sponsored_session_execution_object, get_test_session_execution_object, OutsideExecution
 
 from poseidon_py.poseidon_hash import poseidon_hash_many
 from starknet_py.constants import FEE_CONTRACT_ADDRESS
@@ -1154,3 +1154,38 @@ def setup_session_account_env(init_starknet, account_deployer,
         return account, execute_session_call, session_request_builder, event_name, session_owner_identifier, dest_acc
 
     return _setup_session_acount_env
+
+
+@pytest_asyncio.fixture(scope="module")
+def send_outside_exec_tx_and_assert(init_starknet):
+    _, devnet_client, devnet_account = init_starknet
+    nonce = 0
+
+    async def _send_outside_exec_tx_and_assert(account, calls, events):
+        nonlocal nonce
+        block = await devnet_client.get_block()
+        block_timestamp = block.timestamp
+        out_ex = OutsideExecution(account=account,
+                                  calls=calls,
+                                  execute_before=block_timestamp + 3600,
+                                  execute_after=block_timestamp - 3600,
+                                  nonce=nonce)
+
+        tx = await devnet_account.execute_v1(
+            out_ex.prepare_call(account.address),
+            max_fee=10**17,
+        )
+        receipt = await devnet_client.wait_for_tx(tx.transaction_hash)
+        for e in events:
+            assert txn_receipt_contains_event(
+                receipt,
+                [
+                    get_selector_from_name(e),
+                ],
+                [],
+                match_data=True,
+            ) is True, "missing event"
+
+        nonce += 1
+
+    return _send_outside_exec_tx_and_assert

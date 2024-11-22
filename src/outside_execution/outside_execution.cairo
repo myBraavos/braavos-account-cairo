@@ -4,10 +4,7 @@ mod OutsideExecComponent {
     use braavos_account::outside_execution::hash::calculate_outside_execution_hash;
     use braavos_account::account::interface::IBraavosAccountInternal;
     use braavos_account::utils::utils::execute_calls;
-    use braavos_account::sessions::utils::is_session_revoke_transaction;
-    use braavos_account::utils::asserts::{
-        assert_self_caller, assert_no_self_calls, assert_timestamp
-    };
+    use braavos_account::utils::asserts::{assert_timestamp, assert_no_oe_self_calls};
     use starknet::{
         ContractAddress, get_contract_address, get_caller_address, get_block_timestamp, get_tx_info
     };
@@ -44,9 +41,8 @@ mod OutsideExecComponent {
             signature: Span<felt252>
         ) -> Array<Span<felt252>> {
             validate_caller(outside_execution.caller);
-            if !is_session_revoke_transaction(outside_execution.calls) {
-                assert_no_self_calls(outside_execution.calls);
-            }
+            assert_no_oe_self_calls(outside_execution.calls);
+
             let timestamp = assert_timestamp(
                 outside_execution.execute_after, outside_execution.execute_before
             );

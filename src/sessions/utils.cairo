@@ -69,12 +69,3 @@ fn is_dai_transfer_from_itself_call(call: @Call) -> bool {
             || *call.selector == Consts::TRANSFER_FROM_CAMEL_CALL_SELECTOR)
         && (*call.calldata).len() == 4
 }
-
-fn is_session_revoke_transaction(calls: Span<Call>) -> bool {
-    if calls.len() == 1 {
-        let call = calls.at(0);
-        *call.to == get_contract_address() && *call.selector == Consts::SESSION_REVOKE_SELECTOR
-    } else {
-        false
-    }
-}

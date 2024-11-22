@@ -1,7 +1,7 @@
 from e2e.utils.utils import *
 from e2e.utils.utils_v2 import *
 from e2e.utils.fixtures import *
-from e2e.utils.typed_data import OutsideExecution, get_test_call
+from e2e.utils.typed_data import OutsideExecution, get_test_call, get_test_gas_sponsored_session_execution_object
 
 import base64
 import json
@@ -13,7 +13,7 @@ from starknet_py.net.client_models import Call
 from starknet_py.net.full_node_client import FullNodeClient
 from starknet_py.hash.selector import get_selector_from_name
 from starknet_py.transaction_errors import TransactionRevertedError
-from starknet_py.net.account.account import Account
+from starknet_py.net.account.account import Account, _parse_calls
 
 
 @pytest.mark.asyncio
@@ -585,7 +585,14 @@ async def test_outside_execution_invalid_sig(init_starknet, account_deployer):
 
 
 @pytest.mark.asyncio
-async def test_outside_execution_self_call(init_starknet, account_deployer):
+@pytest.mark.parametrize(["blocked_self_call_entrypoint", "expected_error"],
+                         [("execute_gas_sponsored_session_tx", 'SELF_CALL'),
+                          ("execute_from_outside_v2", 'SELF_CALL'),
+                          ("__execute__", 'NO_REENTRANCE'),
+                          ("__validate__", 'NO_REENTRANCE')])
+async def test_outside_execution_illegal_self_calls_blocked(
+        init_starknet, account_deployer, blocked_self_call_entrypoint,
+        expected_error):
     _, devnet_client, devnet_account = init_starknet
 
     account_deployer = account_deployer
@@ -594,23 +601,237 @@ async def test_outside_execution_self_call(init_starknet, account_deployer):
     account: Account
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
+    transfer_amount = 123
+
+    if blocked_self_call_entrypoint == "execute_gas_sponsored_session_tx":
+        session_exec = get_test_gas_sponsored_session_execution_object(
+            account, account.address)
+        call = session_exec.prepare_call(
+            [get_test_call(devnet_account.address, transfer_amount)],
+            account.address)
+    elif blocked_self_call_entrypoint == "execute_from_outside_v2":
+        inside_out_ex = OutsideExecution(
+            account=account,
+            calls=[get_test_call(devnet_account.address, transfer_amount)],
+            execute_before=block_timestamp + 3600,
+            execute_after=block_timestamp - 3600)
+        call = inside_out_ex.prepare_call(account.address)
+    else:
+        call = Call(
+            to_addr=account.address,
+            selector=get_selector_from_name(blocked_self_call_entrypoint),
+            calldata=_parse_calls(
+                1, get_test_call(devnet_account.address, transfer_amount)))
 
     out_ex = OutsideExecution(
         account=account,
         calls=[
             Call(
                 to_addr=account.address,
-                selector=get_selector_from_name("get_version"),
-                calldata=[],
+                selector=get_selector_from_name(blocked_self_call_entrypoint),
+                calldata=_parse_calls(1, call),
             )
         ],
         execute_before=block_timestamp + 3600,
         execute_after=block_timestamp - 3600)
 
     with pytest.raises(TransactionRevertedError,
-                       match=encode_string_as_hex("SELF_CALL")):
+                       match=encode_string_as_hex(expected_error)):
         tx = await devnet_account.execute_v1(
             out_ex.prepare_call(account.address),
             max_fee=10**17,
         )
         await devnet_client.wait_for_tx(tx.transaction_hash)
+
+
+@pytest.mark.parametrize(["entrypoint", "calldata"], [
+    ("get_version", []),
+    ("get_withdrawal_limit_low", []),
+    ("get_withdrawal_limit_high", []),
+    ("get_daily_spend", []),
+    ("get_fee_token_rate", []),
+    ("get_stark_fee_token_rate", []),
+    ("get_public_key", []),
+    ("get_signers", []),
+    ("get_deferred_remove_signers", []),
+    ("get_execution_time_delay", []),
+    ("get_multisig_threshold", []),
+    ("supports_interface", [0]),
+    ("supportsInterface", [0]),
+    ("is_valid_outside_execution_nonce", [2]),
+    ("is_session_revoked", [0]),
+    ("get_spending_limit_amount_spent", [0, STRK_ADDRESS]),
+    ("is_session_validated", [0]),
+    ("get_session_gas_spent", [0]),
+])
+@pytest.mark.asyncio
+async def test_outside_execution_legal_read_self_calls_allowed(
+        init_starknet, account_deployer, account_declare,
+        send_outside_exec_tx_and_assert, entrypoint, calldata):
+    _, devnet_client, devnet_account = init_starknet
+    account_deployer = account_deployer
+    stark_privk = random.randint(1, 10**10)
+    account, _ = await account_deployer(stark_privk, None, 0)
+    account: Account
+
+    await send_outside_exec_tx_and_assert(
+        account,
+        Call(to_addr=account.address,
+             selector=get_selector_from_name(entrypoint),
+             calldata=calldata), [])
+
+
+@pytest.mark.asyncio
+async def test_outside_execution_is_valid_signature_allowed(
+        init_starknet, account_deployer, account_declare,
+        send_outside_exec_tx_and_assert):
+    _, devnet_client, devnet_account = init_starknet
+    account_deployer = account_deployer
+    stark_privk = random.randint(1, 10**10)
+    account, _ = await account_deployer(stark_privk, None, 0)
+    account: Account
+
+    hash_to_sign = 2
+    hash_sig = sign_hash_stark(hash_to_sign, stark_privk)
+
+    await send_outside_exec_tx_and_assert(
+        account,
+        Call(to_addr=account.address,
+             selector=get_selector_from_name("is_valid_signature"),
+             calldata=[hash_to_sign, len(hash_sig), *hash_sig]), [])
+
+
+@pytest.mark.asyncio
+async def test_outside_execution_legal_self_calls_allowed(
+        init_starknet, account_deployer, account_declare,
+        send_outside_exec_tx_and_assert):
+    _, devnet_client, devnet_account = init_starknet
+
+    account_chash, _, _, _ = account_declare
+    account_deployer = account_deployer
+    stark_privk = random.randint(1, 10**10)
+    account, _ = await account_deployer(stark_privk, None, 0)
+    account: Account
+
+    transfer_amount = 123
+
+    nonce = 0
+
+    # upgrade account
+    await send_outside_exec_tx_and_assert(
+        account,
+        Call(to_addr=account.address,
+             selector=get_selector_from_name("upgrade"),
+             calldata=[account_chash]), ["Upgraded"])
+
+    # add secp signer
+    secp256r1_keypair = generate_secp256r1_keypair()
+    secp256r1_pubk = flatten_seq(secp256r1_keypair[1])
+    add_secp256r1_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name("add_secp256r1_signer"),
+        calldata=[*secp256r1_pubk, SECP256R1_SIGNER_TYPE, 0],
+    )
+    await send_outside_exec_tx_and_assert(account, add_secp256r1_call,
+                                          ["OwnerAdded"])
+    secp256r1_signer = create_secp256r1_signer(secp256r1_keypair[0])
+    account.signer = secp256r1_signer
+
+    # swap secp signer with the same signer
+    change_secp256r1_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name('change_secp256r1_signer'),
+        calldata=[
+            *secp256r1_pubk,
+            poseidon_hash_many(secp256r1_pubk), SECP256R1_SIGNER_TYPE
+        ],
+    )
+
+    await send_outside_exec_tx_and_assert(account, change_secp256r1_call,
+                                          ["OwnerAdded", "OwnerRemoved"])
+
+    # execution time delay
+    custom_etd = 365 * 24 * 60 * 60 - 1
+    deffered_time_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name("set_execution_time_delay"),
+        calldata=[custom_etd],
+    )
+    await send_outside_exec_tx_and_assert(account, deffered_time_call, [])
+    account_etd = (await devnet_client.call_contract(
+        Call(
+            to_addr=account.address,
+            selector=get_selector_from_name("get_execution_time_delay"),
+            calldata=[],
+        )))[0]
+    assert account_etd == custom_etd
+
+    # start deferred removal
+    deferred_remove_signers_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name('deferred_remove_signers'),
+        calldata=[],
+    )
+    await send_outside_exec_tx_and_assert(account,
+                                          deferred_remove_signers_call,
+                                          ["DeferredRemoveSignerRequest"])
+
+    # cancel deferred removal
+    cancel_deferred_remove_signers_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name('cancel_deferred_remove_signers'),
+        calldata=[],
+    )
+    await send_outside_exec_tx_and_assert(
+        account, cancel_deferred_remove_signers_call,
+        ["DeferredRemoveSignerRequestCancelled"])
+
+    # add low
+    set_withdrawal_limit_low_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name("set_withdrawal_limit_low"),
+        calldata=[ETHER],
+    )
+    await send_outside_exec_tx_and_assert(account,
+                                          set_withdrawal_limit_low_call,
+                                          ["WithdrawalLimitLowSet"])
+
+    # add multisig
+    set_multisig_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name("set_multisig_threshold"),
+        calldata=[2],
+    )
+    await send_outside_exec_tx_and_assert(account, set_multisig_call,
+                                          ["MultisigSet"])
+    stark_signer = create_stark_signer(stark_privk)
+    multisig_signer = create_multisig_signer(stark_signer, secp256r1_signer)
+    account.signer = multisig_signer
+
+    # add high
+    set_withdrawal_limit_high_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name("set_withdrawal_limit_high"),
+        calldata=[2 * ETHER],
+    )
+    await send_outside_exec_tx_and_assert(account,
+                                          set_withdrawal_limit_high_call,
+                                          ["WithdrawalLimitHighSet"])
+
+    # update rate config
+    update_config_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name('update_rate_config'),
+        calldata=[0, 0])
+    await send_outside_exec_tx_and_assert(account, update_config_call, [])
+
+    # remove secp
+    remove_secp256r1_call = Call(
+        to_addr=account.address,
+        selector=get_selector_from_name('remove_secp256r1_signer'),
+        calldata=[
+            poseidon_hash_many(secp256r1_pubk), SECP256R1_SIGNER_TYPE, 0
+        ],
+    )
+    await send_outside_exec_tx_and_assert(account, remove_secp256r1_call,
+                                          ["OwnerRemoved"])
