@@ -1,4 +1,4 @@
-const ACCOUNT_VERSION: felt252 = '001.001.000';
+const ACCOUNT_VERSION: felt252 = '001.002.000';
 
 /// # BraavosAccount preset
 ///

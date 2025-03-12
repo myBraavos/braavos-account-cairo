@@ -199,8 +199,7 @@ fn extract_fee_from_tx(tx_info: @TxInfo, version: u256) -> u256 {
                     let max_amount: u256 = (*resource_bound.max_amount).into();
                     let max_price_per_unit: u256 = (*resource_bound.max_price_per_unit).into();
                     l1_gas_overall = max_amount * max_price_per_unit;
-                }
-                else if *resource_bound.resource == Consts::L1_DATA_GAS_RESOURCE {
+                } else if *resource_bound.resource == Consts::L1_DATA_GAS_RESOURCE {
                     let max_amount: u256 = (*resource_bound.max_amount).into();
                     let max_price_per_unit: u256 = (*resource_bound.max_price_per_unit).into();
                     l1_data_gas_overall = max_amount * max_price_per_unit;

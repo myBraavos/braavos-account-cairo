@@ -585,7 +585,7 @@ async def test_upgrade(
         )
         migrated_storage = await devnet_client.get_storage_at(
             account.address, get_selector_from_name("storage_migration_ver"))
-        assert migrated_storage == int.from_bytes(b'001.001.000', 'big')
+        assert migrated_storage == int.from_bytes(b'001.002.000', 'big')
     else:
         with pytest.raises(Exception):
             await account.execute_v1(

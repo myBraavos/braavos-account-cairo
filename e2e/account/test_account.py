@@ -267,9 +267,10 @@ async def test_external_entrypoints_assert_self(init_starknet,
         x[0] for x in external_entrypoints)
     entrypoint_coverage -= set(["execute_from_outside_v2"
                                 ])  # checked separately
-    entrypoint_coverage -= set(
-        ["execute_gas_sponsored_session_tx",
-         "revoke_session"])  # checked separately
+    entrypoint_coverage -= set([
+        "execute_gas_sponsored_session_tx",
+        "execute_gas_sponsored_session_tx_v2", "revoke_session"
+    ])  # checked separately
     assert entrypoint_coverage == set(
     ), f"not all external entrypoints are covered {entrypoint_coverage}"
 
@@ -587,6 +588,7 @@ async def test_outside_execution_invalid_sig(init_starknet, account_deployer):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(["blocked_self_call_entrypoint", "expected_error"],
                          [("execute_gas_sponsored_session_tx", 'SELF_CALL'),
+                          ("execute_gas_sponsored_session_tx_v2", 'SELF_CALL'),
                           ("execute_from_outside_v2", 'SELF_CALL'),
                           ("__execute__", 'NO_REENTRANCE'),
                           ("__validate__", 'NO_REENTRANCE')])
@@ -606,6 +608,12 @@ async def test_outside_execution_illegal_self_calls_blocked(
     if blocked_self_call_entrypoint == "execute_gas_sponsored_session_tx":
         session_exec = get_test_gas_sponsored_session_execution_object(
             account, account.address)
+        call = session_exec.prepare_call(
+            [get_test_call(devnet_account.address, transfer_amount)],
+            account.address)
+    elif blocked_self_call_entrypoint == "execute_gas_sponsored_session_tx_v2":
+        session_exec = get_test_gas_sponsored_session_execution_object(
+            account, account.address, is_v2_typed_data=True)
         call = session_exec.prepare_call(
             [get_test_call(devnet_account.address, transfer_amount)],
             account.address)

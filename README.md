@@ -123,7 +123,7 @@ Prerequisites:
 2. Setup [starknet-devnet-rs](https://github.com/0xSpaceShard/starknet-devnet-rs)
 3. Define `STARKNET_DEVNET` env variable to point to `starknet-devnet-rs` executable
 4. Define `STARKNET_PY_MARSHMALLOW_UNKNOWN_EXCLUDE` env variable to have the value `true`
-5. For RPC 0.8, define `STARKNET_DEVNET_0_8` env variable to point to `starknet-devnet-rs` 0.8 RPC executable 
+5. For RPC 0.8 test, define `STARKNET_DEVNET_0_8` env variable to point to `starknet-devnet-rs` 0.8 RPC executable 
 
 To run tests:
 >

@@ -41,7 +41,7 @@ mod UpgradeTarget {
         }
 
         fn migrate_storage(ref self: ContractState, from_version: felt252) {
-            assert('001.001.000' == from_version, 'INCORRECT_VERSION');
+            assert('001.002.000' == from_version, 'INCORRECT_VERSION');
             self.storage_migration_ver.write(from_version);
         }
     }

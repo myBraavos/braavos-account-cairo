@@ -1,7 +1,6 @@
-from e2e.utils.utils import *
 from e2e.utils.utils_v2 import *
 from e2e.utils.fixtures import *
-from e2e.utils.typed_data import OutsideExecution, get_test_call
+from e2e.utils.typed_data import OutsideExecution, get_test_call, CalldataValidation, AllowedMethod
 
 import base64
 import json
@@ -52,13 +51,15 @@ from starknet_py.net.account.account import Account
         "with_webauthn_multisig_dwl_low_high",
     ],
 )
-@pytest.mark.parametrize("is_gas_sponsored_execution", [False, True])
-@pytest.mark.parametrize("is_v3", [False, True])
+@pytest.mark.parametrize("is_gas_sponsored_execution", [True, False])
+@pytest.mark.parametrize("is_v3", [True, False])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_execution(init_starknet, account_deployer,
                                  setup_session_account_env, second_signer_type,
                                  withdrawal_limit_low, withdrawal_limit_high,
                                  multisig_threshold,
-                                 is_gas_sponsored_execution, is_v3):
+                                 is_gas_sponsored_execution, is_v3,
+                                 is_v2_typed_data):
     _, devnet_client, devnet_account = init_starknet
 
     session_account, execute_session_call, session_request_builder, event_name, session_owner_identifier, destination_account = await setup_session_account_env(
@@ -71,9 +72,11 @@ async def test_session_execution(init_starknet, account_deployer,
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
     balance_before = await destination_account.get_balance(FEE_CONTRACT_ADDRESS
                                                            )
 
@@ -130,14 +133,251 @@ async def test_session_execution(init_starknet, account_deployer,
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    [
+        "second_signer_type",
+        "multisig_threshold",
+        "withdrawal_limit_low",
+        "withdrawal_limit_high",
+    ],
+    [
+        (None, 0, 0, 0),
+        (SECP256R1_SIGNER_TYPE, 0, 0, 0),
+        (SECP256R1_SIGNER_TYPE, 0, 50 * USDC, 0),
+        (SECP256R1_SIGNER_TYPE, 2, 0, 0),
+        (SECP256R1_SIGNER_TYPE, 2, 50 * USDC, 0),
+        (SECP256R1_SIGNER_TYPE, 2, 50 * USDC, 100 * USDC),
+        (WEBAUTHN_SIGNER_TYPE, 0, 0, 0),
+        (WEBAUTHN_SIGNER_TYPE, 0, 50 * USDC, 0),
+        (WEBAUTHN_SIGNER_TYPE, 2, 0, 0),
+        (WEBAUTHN_SIGNER_TYPE, 2, 50 * USDC, 0),
+        (WEBAUTHN_SIGNER_TYPE, 2, 50 * USDC, 100 * USDC),
+    ],
+    ids=[
+        "no_second_signer_no_multisig",
+        "with_secp256r1_no_multisig",
+        "with_secp256r1_no_multisig_dwl_low",
+        "with_secp256r1_multisig",
+        "with_secp256r1_multisig_dwl_low",
+        "with_secp256r1_multisig_dwl_low_high",
+        "with_webauthn_no_multisig",
+        "with_webauthn_no_multisig_dwl_low",
+        "with_webauthn_multisig",
+        "with_webauthn_multisig_dwl_low",
+        "with_webauthn_multisig_dwl_low_high",
+    ],
+)
+@pytest.mark.parametrize("is_gas_sponsored_execution", [True, False])
+@pytest.mark.parametrize("is_v3", [True, False])
+async def test_session_execution_with_bad_calldata(
+        init_starknet, account_deployer, setup_session_account_env,
+        second_signer_type, withdrawal_limit_low, withdrawal_limit_high,
+        multisig_threshold, is_gas_sponsored_execution, is_v3):
+    _, devnet_client, devnet_account = init_starknet
+
+    session_account, execute_session_call, session_request_builder, event_name, session_owner_identifier, destination_account = await setup_session_account_env(
+        is_gas_sponsored_execution,
+        second_signer_type,
+        multisig_threshold,
+        withdrawal_limit_low=withdrawal_limit_low,
+        withdrawal_limit_high=withdrawal_limit_high)
+
+    block = await devnet_client.get_block()
+    block_timestamp = block.timestamp
+
+    oe = session_request_builder(
+        session_account,
+        session_owner_identifier,
+        block_timestamp + 3600,
+        block_timestamp - 3600,
+        is_v2_typed_data=True,
+        calls=[
+            AllowedMethod(
+                to_addr=STRK_ADDRESS,
+                selector=get_selector_from_name("approve"),
+                calldata_validations=[
+                    # amount.low
+                    CalldataValidation(offset=1, value=100),
+                    # amount.high
+                    CalldataValidation(offset=2, value=0),
+                    # spender
+                    CalldataValidation(offset=0,
+                                       value=destination_account.address),
+                ]),
+            AllowedMethod(
+                to_addr=STRK_ADDRESS,
+                selector=get_selector_from_name("test0"),
+                calldata_validations=[],
+            ),
+            AllowedMethod(
+                to_addr=STRK_ADDRESS,
+                selector=get_selector_from_name("test1"),
+                calldata_validations=[],
+            ),
+            AllowedMethod(
+                to_addr=int(FEE_CONTRACT_ADDRESS, 16),
+                selector=get_selector_from_name("test2"),
+                calldata_validations=[],
+            ),
+            AllowedMethod(
+                to_addr=int(FEE_CONTRACT_ADDRESS, 16),
+                selector=get_selector_from_name("transfer"),
+                calldata_validations=[
+                    # amount.low
+                    CalldataValidation(offset=1, value=100),
+                    # amount.high
+                    CalldataValidation(offset=2, value=0),
+                    # to
+                    CalldataValidation(offset=0,
+                                       value=destination_account.address),
+                ],
+            ),
+            AllowedMethod(
+                to_addr=int(FEE_CONTRACT_ADDRESS, 16),
+                selector=get_selector_from_name("test3"),
+                calldata_validations=[],
+            ),
+        ])
+
+    if not is_v3 and not is_gas_sponsored_execution:
+        return
+
+    with pytest.raises((TransactionRevertedError, ClientError),
+                       match=encode_string_as_hex("BAD_CALLDATA")):
+        oe_call = oe.prepare_call([
+            get_test_call(devnet_account.address, 100),
+            get_test_call(devnet_account.address,
+                          100,
+                          function_name="approve",
+                          token_address=STRK_ADDRESS)
+        ], session_account.address)
+        tx = await execute_session_call(oe_call)
+        await devnet_client.wait_for_tx(tx.transaction_hash)
+
+    with pytest.raises((TransactionRevertedError, ClientError),
+                       match=encode_string_as_hex("BAD_CALLDATA")):
+        oe_call = oe.prepare_call([
+            get_test_call(destination_account.address, 1001),
+            get_test_call(destination_account.address,
+                          100,
+                          function_name="approve",
+                          token_address=STRK_ADDRESS)
+        ], session_account.address)
+        tx = await execute_session_call(oe_call)
+        await devnet_client.wait_for_tx(tx.transaction_hash)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_gas_sponsored_execution", [True, False])
+@pytest.mark.parametrize("is_v3", [True, False])
+async def test_session_execution_with_multiple_call_validations_on_same_method(
+        init_starknet, account_deployer, setup_session_account_env,
+        is_gas_sponsored_execution, is_v3):
+    _, devnet_client, devnet_account = init_starknet
+
+    session_account, execute_session_call, session_request_builder, _, session_owner_identifier, destination_account = await setup_session_account_env(
+        is_gas_sponsored_execution, SECP256R1_SIGNER_TYPE, 0)
+
+    block = await devnet_client.get_block()
+    block_timestamp = block.timestamp
+
+    oe = session_request_builder(
+        session_account,
+        session_owner_identifier,
+        block_timestamp + 3600,
+        block_timestamp - 3600,
+        is_v2_typed_data=True,
+        calls=[
+            AllowedMethod(to_addr=STRK_ADDRESS,
+                          selector=get_selector_from_name("approve"),
+                          calldata_validations=[
+                              CalldataValidation(
+                                  offset=0, value=destination_account.address)
+                          ]),
+            AllowedMethod(to_addr=STRK_ADDRESS,
+                          selector=get_selector_from_name("approve"),
+                          calldata_validations=[
+                              CalldataValidation(offset=0,
+                                                 value=devnet_account.address)
+                          ]),
+            AllowedMethod(
+                to_addr=STRK_ADDRESS,
+                selector=get_selector_from_name("test0"),
+                calldata_validations=[],
+            ),
+            AllowedMethod(
+                to_addr=STRK_ADDRESS,
+                selector=get_selector_from_name("test1"),
+                calldata_validations=[],
+            ),
+            AllowedMethod(
+                to_addr=int(FEE_CONTRACT_ADDRESS, 16),
+                selector=get_selector_from_name("test2"),
+                calldata_validations=[],
+            ),
+            AllowedMethod(
+                to_addr=int(FEE_CONTRACT_ADDRESS, 16),
+                selector=get_selector_from_name("transfer"),
+                calldata_validations=[
+                    # amount.low
+                    CalldataValidation(offset=1, value=100),
+                    # amount.high
+                    CalldataValidation(offset=2, value=0),
+                    # to
+                    CalldataValidation(offset=0,
+                                       value=destination_account.address),
+                ],
+            ),
+            AllowedMethod(
+                to_addr=int(FEE_CONTRACT_ADDRESS, 16),
+                selector=get_selector_from_name("test3"),
+                calldata_validations=[],
+            ),
+        ])
+
+    if not is_v3 and not is_gas_sponsored_execution:
+        return
+
+    oe_call = oe.prepare_call([
+        get_test_call(destination_account.address,
+                      100,
+                      function_name="approve",
+                      token_address=STRK_ADDRESS),
+        get_test_call(devnet_account.address,
+                      100,
+                      function_name="approve",
+                      token_address=STRK_ADDRESS)
+    ], session_account.address)
+    tx = await execute_session_call(oe_call)
+    await devnet_client.wait_for_tx(tx.transaction_hash)
+
+    with pytest.raises((TransactionRevertedError, ClientError),
+                       match=encode_string_as_hex("BAD_CALLDATA")):
+        oe_call = oe.prepare_call([
+            get_test_call(destination_account.address,
+                          100,
+                          function_name="approve",
+                          token_address=STRK_ADDRESS),
+            get_test_call(session_account.address,
+                          100,
+                          function_name="approve",
+                          token_address=STRK_ADDRESS)
+        ], session_account.address)
+        tx = await execute_session_call(oe_call)
+        await devnet_client.wait_for_tx(tx.transaction_hash)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("added_signer_type",
                          [SECP256R1_SIGNER_TYPE, WEBAUTHN_SIGNER_TYPE])
 @pytest.mark.parametrize(["is_gas_sponsored_execution", "is_v3"],
                          [(False, True), (True, False), (True, True)])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_cache_invalidation_when_signer_added(
         init_starknet, account_deployer, setup_session_account_env,
         get_spending_limit_amount_spent, get_session_gas_spent,
-        added_signer_type, is_gas_sponsored_execution, is_v3):
+        added_signer_type, is_gas_sponsored_execution, is_v3,
+        is_v2_typed_data):
 
     _, devnet_client, devnet_account = init_starknet
 
@@ -147,9 +387,11 @@ async def test_session_cache_invalidation_when_signer_added(
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
     # caching session validation
     tx = await execute_session_call(
         oe.prepare_call(
@@ -226,10 +468,12 @@ async def test_session_cache_invalidation_when_signer_added(
                          [SECP256R1_SIGNER_TYPE, WEBAUTHN_SIGNER_TYPE])
 @pytest.mark.parametrize(["is_gas_sponsored_execution", "is_v3"],
                          [(False, True), (True, False), (True, True)])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_cache_invalidation_when_signer_removed(
         init_starknet, account_deployer, setup_session_account_env,
         get_spending_limit_amount_spent, get_session_gas_spent,
-        existing_signer_type, is_gas_sponsored_execution, is_v3):
+        existing_signer_type, is_gas_sponsored_execution, is_v3,
+        is_v2_typed_data):
 
     _, devnet_client, devnet_account = init_starknet
 
@@ -239,9 +483,11 @@ async def test_session_cache_invalidation_when_signer_removed(
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
     # caching session validation
     tx = await execute_session_call(
         oe.prepare_call(
@@ -316,10 +562,12 @@ async def test_session_cache_invalidation_when_signer_removed(
 @pytest.mark.parametrize("multisig_initial_value", [0, 2])
 @pytest.mark.parametrize(["is_gas_sponsored_execution", "is_v3"],
                          [(False, True), (True, False), (True, True)])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_cache_invalidation_when_multisig_changes(
         init_starknet, account_deployer, setup_session_account_env,
         get_spending_limit_amount_spent, get_session_gas_spent,
-        multisig_initial_value, is_gas_sponsored_execution, is_v3):
+        multisig_initial_value, is_gas_sponsored_execution, is_v3,
+        is_v2_typed_data):
 
     _, devnet_client, devnet_account = init_starknet
 
@@ -330,9 +578,11 @@ async def test_session_cache_invalidation_when_multisig_changes(
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
     # caching session validation
     tx = await execute_session_call(
         oe.prepare_call(
@@ -432,10 +682,11 @@ async def test_session_cache_invalidation_when_multisig_changes(
         "with_webauthn_multisig_dwl_low_high",
     ],
 )
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_execution_with_etd_present(
         init_starknet, account_deployer, setup_session_account_env,
         second_signer_type, withdrawal_limit_low, withdrawal_limit_high,
-        multisig_threshold):
+        multisig_threshold, is_v2_typed_data):
     is_v3 = True
     devnet_url, devnet_client, devnet_account = init_starknet
     stark_privk = random.randint(1, 10**10)
@@ -450,9 +701,11 @@ async def test_session_execution_with_etd_present(
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 360000000,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     balance_before = await destination_account.get_balance(FEE_CONTRACT_ADDRESS
                                                            )
@@ -527,11 +780,13 @@ async def test_session_execution_with_etd_present(
 )
 @pytest.mark.parametrize(["is_gas_sponsored_execution", "is_v3"],
                          [(False, True), (True, False), (True, True)])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_execution_revoke(init_starknet, account_deployer,
                                         setup_session_account_env,
                                         is_revoked_on_start,
                                         second_signer_type, multisig_threshold,
-                                        is_gas_sponsored_execution, is_v3):
+                                        is_gas_sponsored_execution, is_v3,
+                                        is_v2_typed_data):
     _, devnet_client, devnet_account = init_starknet
     session_account, execute_session_call, session_request_builder, event_name, session_owner_identifier, destination_account = await setup_session_account_env(
         is_gas_sponsored_execution, second_signer_type, multisig_threshold)
@@ -539,9 +794,11 @@ async def test_session_execution_revoke(init_starknet, account_deployer,
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     balance_before = await destination_account.get_balance(FEE_CONTRACT_ADDRESS
                                                            )
@@ -604,12 +861,12 @@ async def test_session_execution_revoke(init_starknet, account_deployer,
 )
 @pytest.mark.parametrize("is_gas_sponsored_execution_first", [False, True])
 @pytest.mark.parametrize("is_gas_sponsored_execution_second", [True, False])
-async def test_session_multiple_concurrent(init_starknet, account_deployer,
-                                           setup_session_account_env,
-                                           second_signer_type,
-                                           multisig_threshold,
-                                           is_gas_sponsored_execution_first,
-                                           is_gas_sponsored_execution_second):
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
+async def test_session_multiple_concurrent(
+        init_starknet, account_deployer, setup_session_account_env,
+        second_signer_type, multisig_threshold,
+        is_gas_sponsored_execution_first, is_gas_sponsored_execution_second,
+        is_v2_typed_data):
     _, devnet_client, devnet_account = init_starknet
 
     session_account, execute_session_call, session_request_builder, event_name, session_owner_identifier, destination_account = await setup_session_account_env(
@@ -619,9 +876,11 @@ async def test_session_multiple_concurrent(init_starknet, account_deployer,
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe1 = session_request_builder(session_account, session_owner_identifier,
+    oe1 = session_request_builder(session_account,
+                                  session_owner_identifier,
                                   block_timestamp + 3600,
-                                  block_timestamp - 3600)
+                                  block_timestamp - 3600,
+                                  is_v2_typed_data=is_v2_typed_data)
     _, second_execute_session_call, second_session_request_builder, second_event_name, second_session_owner_identifier, _ = await setup_session_account_env(
         is_gas_sponsored_execution_second,
         second_signer_type,
@@ -726,11 +985,13 @@ async def test_session_multiple_concurrent(init_starknet, account_deployer,
 )
 @pytest.mark.parametrize("is_after_cache", [True, False])
 @pytest.mark.parametrize("is_gas_sponsored_execution", [False, True])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_execution_expiry(init_starknet, account_deployer,
                                         setup_session_account_env,
                                         second_signer_type, multisig_threshold,
                                         is_after_cache,
-                                        is_gas_sponsored_execution):
+                                        is_gas_sponsored_execution,
+                                        is_v2_typed_data):
     devnet_url, devnet_client, devnet_account = init_starknet
 
     session_account, execute_session_call, session_request_builder, _, session_owner_identifier, destination_account = await setup_session_account_env(
@@ -739,9 +1000,11 @@ async def test_session_execution_expiry(init_starknet, account_deployer,
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 13600,
-                                 block_timestamp + 600)
+                                 block_timestamp + 600,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     with pytest.raises((TransactionRevertedError, ClientError),
                        match=encode_string_as_hex("INVALID_TIMESTAMP")):
@@ -798,10 +1061,11 @@ async def test_session_execution_expiry(init_starknet, account_deployer,
 )
 @pytest.mark.parametrize("is_after_cache", [False, True])
 @pytest.mark.parametrize("is_gas_sponsored_execution", [True, False])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_execution_with_invalid_call(
         init_starknet, account_deployer, setup_session_account_env,
         second_signer_type, multisig_threshold, is_after_cache,
-        is_gas_sponsored_execution):
+        is_gas_sponsored_execution, is_v2_typed_data):
     _, devnet_client, devnet_account = init_starknet
 
     session_account, execute_session_call, session_request_builder, _, session_owner_identifier, destination_account = await setup_session_account_env(
@@ -810,9 +1074,11 @@ async def test_session_execution_with_invalid_call(
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     if is_after_cache:
         balance_before = await destination_account.get_balance(
@@ -836,7 +1102,12 @@ async def test_session_execution_with_invalid_call(
 
         # overriding the call with an endpoint that's not part of the session context
         if is_gas_sponsored_execution:
-            oe_call.calldata[18] = get_selector_from_name('increase_allowance')
+            if is_v2_typed_data:
+                oe_call.calldata[31] = get_selector_from_name(
+                    'increase_allowance')
+            else:
+                oe_call.calldata[18] = get_selector_from_name(
+                    'increase_allowance')
         else:
             oe_call[1].selector = get_selector_from_name('increase_allowance')
 
@@ -866,11 +1137,13 @@ async def test_session_execution_with_invalid_call(
     ],
 )
 @pytest.mark.parametrize("is_gas_sponsored_execution", [False, True])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_execution_invalid_sig(init_starknet, account_deployer,
                                              setup_session_account_env,
                                              second_signer_type,
                                              multisig_threshold,
-                                             is_gas_sponsored_execution):
+                                             is_gas_sponsored_execution,
+                                             is_v2_typed_data):
     _, devnet_client, devnet_account = init_starknet
 
     session_account, execute_session_call, session_request_builder, _, session_owner_identifier, destination_account = await setup_session_account_env(
@@ -879,9 +1152,11 @@ async def test_session_execution_invalid_sig(init_starknet, account_deployer,
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     oe.sig = []
     oe_call = oe.prepare_call([
@@ -896,9 +1171,11 @@ async def test_session_execution_invalid_sig(init_starknet, account_deployer,
         await devnet_client.wait_for_tx(tx.transaction_hash)
 
     # trying with a faulty sig
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
     oe.sig[1] += 1
 
     oe_call = oe.prepare_call([
@@ -934,9 +1211,11 @@ async def test_session_execution_invalid_sig(init_starknet, account_deployer,
     ],
 )
 @pytest.mark.parametrize("is_gas_sponsored_execution", [False, True])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_execution_invalid_caller(
         init_starknet, account_deployer, setup_session_account_env,
-        second_signer_type, multisig_threshold, is_gas_sponsored_execution):
+        second_signer_type, multisig_threshold, is_gas_sponsored_execution,
+        is_v2_typed_data):
     _, devnet_client, devnet_account = init_starknet
 
     session_account, execute_session_call, session_request_builder, _, session_owner_identifier, destination_account = await setup_session_account_env(
@@ -946,9 +1225,11 @@ async def test_session_execution_invalid_caller(
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
 
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     oe_call = oe.prepare_call([
         get_test_call(destination_account.address, 100),
@@ -981,6 +1262,7 @@ async def test_session_execution_invalid_caller(
         "with_webauthn_multisig",
     ],
 )
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_gas_limit_overload(
     init_starknet,
     account_deployer,
@@ -988,6 +1270,7 @@ async def test_session_gas_limit_overload(
     get_session_gas_spent,
     second_signer_type,
     multisig_threshold,
+    is_v2_typed_data,
 ):
     devnet_url, devnet_client, devnet_account = init_starknet
 
@@ -1003,7 +1286,8 @@ async def test_session_gas_limit_overload(
                                  session_owner_identifier,
                                  block_timestamp + 3600,
                                  block_timestamp - 3600,
-                                 strk_gas_limit=strk_gas_limit)
+                                 strk_gas_limit=strk_gas_limit,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     with pytest.raises(ClientError, match=encode_string_as_hex("INVALID_FEE")):
         tx = await execute_session_call(
@@ -1087,11 +1371,13 @@ async def test_session_gas_limit_overload(
 @pytest.mark.parametrize("dai_address", [DAIV0_ADDRESS, DAIV2_ADDRESS])
 @pytest.mark.parametrize("dai_transfer_from_entrypoint",
                          ["transfer_from", "transferFrom"])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_spending_limits(
         init_starknet, account_deployer, usdc_token, setup_session_account_env,
         get_spending_limit_amount_spent, second_signer_type,
         multisig_threshold, is_gas_sponsored_execution, is_after_cache,
-        is_fail_on_high_u256, dai_address, dai_transfer_from_entrypoint):
+        is_fail_on_high_u256, dai_address, dai_transfer_from_entrypoint,
+        is_v2_typed_data):
     devnet_url, devnet_client, devnet_account = init_starknet
 
     session_account, execute_session_call, session_request_builder, _, session_owner_identifier, destination_account = await setup_session_account_env(
@@ -1121,22 +1407,25 @@ async def test_session_spending_limits(
 
     calls = [
         *[
-            Call(to_addr=STRK_ADDRESS,
-                 selector=get_selector_from_name(name),
-                 calldata=[]) for name in relevant_erc20_entrypoints +
+            AllowedMethod(to_addr=STRK_ADDRESS,
+                          selector=get_selector_from_name(name),
+                          calldata_validations=[])
+            for name in relevant_erc20_entrypoints +
             relevant_snake_erc20_entrypoints
         ],
         *[
-            Call(to_addr=usdc_token.address,
-                 selector=get_selector_from_name(name),
-                 calldata=[]) for name in relevant_erc20_entrypoints
+            AllowedMethod(to_addr=usdc_token.address,
+                          selector=get_selector_from_name(name),
+                          calldata_validations=[])
+            for name in relevant_erc20_entrypoints
         ],
-        Call(to_addr=int(FEE_CONTRACT_ADDRESS, 16),
-             selector=get_selector_from_name("transfer"),
-             calldata=[]),
-        Call(to_addr=dai_address,
-             selector=get_selector_from_name(dai_transfer_from_entrypoint),
-             calldata=[]),
+        AllowedMethod(to_addr=int(FEE_CONTRACT_ADDRESS, 16),
+                      selector=get_selector_from_name("transfer"),
+                      calldata_validations=[]),
+        AllowedMethod(
+            to_addr=dai_address,
+            selector=get_selector_from_name(dai_transfer_from_entrypoint),
+            calldata_validations=[]),
     ]
 
     spending_limits = [[STRK_ADDRESS, 5 * 10**18],
@@ -1148,7 +1437,8 @@ async def test_session_spending_limits(
                                  block_timestamp + 3600,
                                  block_timestamp - 3600,
                                  calls=calls,
-                                 spending_limits=spending_limits)
+                                 spending_limits=spending_limits,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     if is_after_cache:
         # sending a passing tx to test cached state spending limit checks
@@ -1320,11 +1610,13 @@ async def test_session_spending_limits(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_after_cache", [False, True])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_revoke_via_outside_execution(
     init_starknet,
     account_deployer,
     setup_session_account_env,
     is_after_cache,
+    is_v2_typed_data,
 ):
     devnet_url, devnet_client, devnet_account = init_starknet
 
@@ -1333,14 +1625,16 @@ async def test_session_revoke_via_outside_execution(
 
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
-    oe = session_request_builder(session_account, session_owner_identifier,
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
                                  block_timestamp + 3600,
-                                 block_timestamp - 3600)
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     if is_after_cache:
         tx = await execute_session_call(
             oe.prepare_call(
-                [get_test_call(destination_account.address, 10**18)],
+                [get_test_call(destination_account.address, 100)],
                 session_account.address,
             ))
         await devnet_client.wait_for_tx(tx.transaction_hash)
@@ -1382,11 +1676,13 @@ async def test_session_revoke_via_outside_execution(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_gas_sponsored_execution", [False, True])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_self_calls_are_blocked(
     init_starknet,
     account_deployer,
     setup_session_account_env,
     is_gas_sponsored_execution,
+    is_v2_typed_data,
 ):
     devnet_url, devnet_client, devnet_account = init_starknet
 
@@ -1401,10 +1697,11 @@ async def test_session_self_calls_are_blocked(
         block_timestamp + 3600,
         block_timestamp - 3600,
         calls=[
-            Call(to_addr=session_account.address,
-                 selector=get_selector_from_name("upgrade"),
-                 calldata=[])
-        ])
+            AllowedMethod(to_addr=session_account.address,
+                          selector=get_selector_from_name("upgrade"),
+                          calldata_validations=[])
+        ],
+        is_v2_typed_data=is_v2_typed_data)
 
     with pytest.raises((ClientError, TransactionRevertedError),
                        match=encode_string_as_hex("SELF_CALL")):
@@ -1419,11 +1716,13 @@ async def test_session_self_calls_are_blocked(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("is_gas_sponsored_execution", [False, True])
+@pytest.mark.parametrize("is_v2_typed_data", [False, True])
 async def test_session_bad_call_hints(
     init_starknet,
     account_deployer,
     setup_session_account_env,
     is_gas_sponsored_execution,
+    is_v2_typed_data,
 ):
     devnet_url, devnet_client, devnet_account = init_starknet
 
@@ -1432,12 +1731,11 @@ async def test_session_bad_call_hints(
 
     block = await devnet_client.get_block()
     block_timestamp = block.timestamp
-    oe = session_request_builder(
-        session_account,
-        session_owner_identifier,
-        block_timestamp + 3600,
-        block_timestamp - 3600,
-    )
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
+                                 block_timestamp + 3600,
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
 
     # sending call hints with bad size
     with pytest.raises((ClientError, TransactionRevertedError),
@@ -1476,4 +1774,42 @@ async def test_session_bad_call_hints(
             ],
                             session_account.address,
                             override_call_hints=[10000]))
+        await devnet_client.wait_for_tx(tx.transaction_hash)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("is_v2_typed_data", [True])
+async def test_session_owner_signature_length(
+    init_starknet,
+    account_deployer,
+    setup_session_account_env,
+    is_v2_typed_data,
+):
+    devnet_url, devnet_client, devnet_account = init_starknet
+
+    session_account, execute_session_call, session_request_builder, _, session_owner_identifier, destination_account = await setup_session_account_env(
+        False, None, 0)
+
+    block = await devnet_client.get_block()
+    block_timestamp = block.timestamp
+    oe = session_request_builder(session_account,
+                                 session_owner_identifier,
+                                 block_timestamp + 3600,
+                                 block_timestamp - 3600,
+                                 is_v2_typed_data=is_v2_typed_data)
+
+    oe_call = oe.prepare_call([
+        get_test_call(destination_account.address, 100),
+        get_test_call(destination_account.address,
+                      100,
+                      function_name="approve",
+                      token_address=STRK_ADDRESS)
+    ], session_account.address)
+    with pytest.raises((ClientError, TransactionRevertedError),
+                       match=encode_string_as_hex("INVALID_SIG")):
+        tx = await execute_session_call(
+            oe_call,
+            is_v3=True,
+            signer=create_legacy_stark_signer_oversized_length(
+                devnet_account.signer.private_key))
         await devnet_client.wait_for_tx(tx.transaction_hash)

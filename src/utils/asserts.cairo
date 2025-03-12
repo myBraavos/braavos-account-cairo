@@ -5,6 +5,8 @@ mod Consts {
     const OUTSIDE_EXECUTION_SELECTOR: felt252 = selector!("execute_from_outside_v2");
     const GAS_SPONSORED_SESSION_EXECUTION_SELECTOR: felt252 =
         selector!("execute_gas_sponsored_session_tx");
+    const GAS_SPONSORED_SESSION_EXECUTION_V2_SELECTOR: felt252 =
+        selector!("execute_gas_sponsored_session_tx_v2");
 }
 
 fn assert_self_caller() {
@@ -24,6 +26,7 @@ fn assert_no_self_calls(mut calls: Span<Call>) {
 fn is_oe_self_call_selector(selector: felt252) -> bool {
     selector == Consts::OUTSIDE_EXECUTION_SELECTOR
         || selector == Consts::GAS_SPONSORED_SESSION_EXECUTION_SELECTOR
+        || selector == Consts::GAS_SPONSORED_SESSION_EXECUTION_V2_SELECTOR
 }
 
 fn assert_no_oe_self_calls(mut calls: Span<Call>) {

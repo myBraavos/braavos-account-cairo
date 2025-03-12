@@ -13,7 +13,6 @@ from e2e.utils.utils import *
 import e2e.utils.utils_v2 as utils_v2
 from e2e.utils.utils_v2 import ACCOUNTS
 from e2e.utils.typed_data import get_test_gas_sponsored_session_execution_object, get_test_session_execution_object, OutsideExecution
-
 from poseidon_py.poseidon_hash import poseidon_hash_many
 from starknet_py.constants import FEE_CONTRACT_ADDRESS
 from starknet_py.hash.class_hash import compute_class_hash
@@ -1137,17 +1136,20 @@ def setup_session_account_env(init_starknet, account_deployer,
             chain=DEVNET_CHAIN_ID,
         )
 
-        async def execute_session_call(call, is_v3=True, max_fee=10**17):
+        async def execute_session_call(call,
+                                       is_v3=True,
+                                       max_fee=10**17,
+                                       signer=devnet_account.signer):
             if is_gas_sponsored_session:
                 return await execute_with_signer(devnet_account,
                                                  call,
-                                                 devnet_account.signer,
+                                                 signer,
                                                  is_v3=is_v3,
                                                  max_fee=max_fee)
             else:
                 return await execute_with_signer(account,
                                                  call,
-                                                 devnet_account.signer,
+                                                 signer,
                                                  is_v3=is_v3,
                                                  max_fee=max_fee)
 

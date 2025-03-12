@@ -5,9 +5,11 @@ mod SessionComponent {
     use core::dict::Felt252Dict;
     use core::integer::U256Zeroable;
     use braavos_account::sessions::interface::{
-        ISessionExecute, ISessionManagement, SessionExecuteRequest, IGasSponsoredSessionExecute,
-        GasSponsoredSessionStarted, GasSponsoredSessionExecutionRequest, ISessionExecuteInternal,
-        SessionStarted, ISessionHelper, TokenAmount, SessionRevoked
+        GasSponsoredSessionExecutionRequest, GasSponsoredSessionExecutionRequestV2,
+        GasSponsoredSessionStarted, IGasSponsoredSessionExecute,
+        IGasSponsoredSessionExecuteInternal, ISessionExecute, ISessionExecuteInternal,
+        ISessionHelper, ISessionManagement, SessionExecuteRequest, SessionExecuteRequestV2,
+        SessionKeyVersion, SessionRevoked, SessionStarted, TokenAmount,
     };
     use braavos_account::utils::asserts::{
         assert_self_caller, assert_no_self_calls, assert_timestamp, assert_timestamp_2
@@ -18,9 +20,12 @@ mod SessionComponent {
     };
     use braavos_account::utils::utils::{execute_calls, extract_fee_from_tx};
     use braavos_account::sessions::utils::{
-        is_erc20_token_removal_call, validate_allowed_methods, is_dai_transfer_from_itself_call
+        GasSponsoredSessionExecutionRequestIntoV2, SessionExecuteRequestIntoV2,
+        is_dai_transfer_from_itself_call, is_erc20_token_removal_call, validate_allowed_methods,
+        get_session_execute_version
     };
     use braavos_account::signers::signer_address_mgt::get_signers;
+    use braavos_account::signers::signer_management::SIG_LEN_STARK;
     use braavos_account::signers::interface::IMultisig;
     use poseidon::poseidon_hash_span;
     use braavos_account::signers::signers::{StarkPubKey, StarkSignerMethods};
@@ -107,6 +112,12 @@ mod SessionComponent {
         ) {
             panic_with_felt252(Errors::NOT_ALLOWED);
         }
+
+        fn session_execute_v2(
+            self: @ComponentState<TContractState>, session_execute_request: SessionExecuteRequestV2,
+        ) {
+            panic_with_felt252(Errors::NOT_ALLOWED);
+        }
     }
 
 
@@ -139,11 +150,17 @@ mod SessionComponent {
             timestamp: u64,
             calls: Span<Call>,
         ) -> felt252 {
+            let session_key_version = get_session_execute_version(calls);
             let mut session_execute_calldata = *calls.at(0).calldata;
-            let session_execute_request: SessionExecuteRequest = Serde::<
-                SessionExecuteRequest
-            >::deserialize(ref session_execute_calldata)
-                .expect(Errors::INVALID_INPUT);
+            let session_execute_request: SessionExecuteRequestV2 =
+                if session_key_version == SessionKeyVersion::V2 {
+                Serde::<SessionExecuteRequestV2>::deserialize(ref session_execute_calldata)
+                    .expect(Errors::INVALID_INPUT)
+            } else {
+                Serde::<SessionExecuteRequest>::deserialize(ref session_execute_calldata)
+                    .expect(Errors::INVALID_INPUT)
+                    .into()
+            };
             let tx_ver = tx_info.version;
             assert(Into::<felt252, u256>::into(tx_ver).low == 3, Errors::INVALID_TX_VERSION);
 
@@ -160,11 +177,13 @@ mod SessionComponent {
             );
             validate_allowed_methods(
                 session_execute_request.session_request.allowed_method_guids,
+                session_execute_request.session_request.allowed_method_calldata_validations,
                 executing_calls,
-                session_execute_request.call_hints
+                session_execute_request.call_hints,
+                session_key_version
             );
             let session_hash = calculate_session_execute_hash(
-                @session_execute_request.session_request
+                @session_execute_request.session_request, session_key_version
             );
 
             assert(!self.is_session_revoked(session_hash), Errors::SESSION_REVOKED);
@@ -187,8 +206,11 @@ mod SessionComponent {
                 pub_key: session_execute_request.session_request.owner_pub_key
             };
 
-            // Note: Potential gas issue in fee market conditions, will fix in future release
-            assert(session_stark_owner.validate_signature(hash, signature), Errors::INVALID_SIG);
+            assert(
+                session_stark_owner.validate_signature(hash, signature)
+                    && signature.len() == SIG_LEN_STARK,
+                Errors::INVALID_SIG
+            );
 
             if (!is_execute_session_validated) {
                 self._cache_session(session_hash);
@@ -223,7 +245,7 @@ mod SessionComponent {
         // executes the transaction calls, skipping the first call which only contains
         // the session metadata
         fn _execute_session_calls(
-            ref self: ComponentState<TContractState>, calls: Span<Call>
+            ref self: ComponentState<TContractState>, calls: Span<Call>,
         ) -> Array<Span<felt252>> {
             execute_calls(calls.slice(1, calls.len() - 1))
         }
@@ -346,14 +368,14 @@ mod SessionComponent {
         }
     }
 
-    #[embeddable_as(GasSponsoredSessionExec)]
-    impl GasSponsoredSessionExecImpl<
+
+    impl GasSponsoredSessionExecInternalImpl<
         TContractState,
         +HasComponent<TContractState>,
         +IBraavosAccountInternal<TContractState>,
         +IMultisig<TContractState>,
         +Drop<TContractState>,
-    > of IGasSponsoredSessionExecute<ComponentState<TContractState>> {
+    > of IGasSponsoredSessionExecuteInternal<ComponentState<TContractState>> {
         // This function validates and executes outside execution session transactions. It validates
         // the following:
         // 1. No self calls.
@@ -364,10 +386,11 @@ mod SessionComponent {
         // already cached.
         // 6. Tokens spent during this session aren't greater than specified in the spending limit
         // array.
-        fn execute_gas_sponsored_session_tx(
+        fn _execute_gas_sponsored_session_tx_internal(
             ref self: ComponentState<TContractState>,
-            gas_sponsored_session_request: GasSponsoredSessionExecutionRequest,
-            signature: Span<felt252>
+            gas_sponsored_session_request: GasSponsoredSessionExecutionRequestV2,
+            signature: Span<felt252>,
+            session_key_version: SessionKeyVersion,
         ) -> Array<Span<felt252>> {
             assert_no_self_calls(gas_sponsored_session_request.calls);
             let timestamp = assert_timestamp(
@@ -376,13 +399,15 @@ mod SessionComponent {
             );
             validate_allowed_methods(
                 gas_sponsored_session_request.allowed_method_guids,
+                gas_sponsored_session_request.allowed_method_calldata_validations,
                 gas_sponsored_session_request.calls,
-                gas_sponsored_session_request.call_hints
+                gas_sponsored_session_request.call_hints,
+                session_key_version
             );
 
             let caller = get_caller_address();
             let session_hash = calculate_gas_sponsored_session_execution_hash(
-                @gas_sponsored_session_request, caller
+                @gas_sponsored_session_request, caller, session_key_version
             );
             let tx_info = get_tx_info().unbox();
             let tx_ver = tx_info.version;
@@ -422,6 +447,37 @@ mod SessionComponent {
                 );
 
             execute_calls(gas_sponsored_session_request.calls)
+        }
+    }
+
+    #[embeddable_as(GasSponsoredSessionExec)]
+    impl GasSponsoredSessionExecImpl<
+        TContractState,
+        +HasComponent<TContractState>,
+        +IBraavosAccountInternal<TContractState>,
+        +IMultisig<TContractState>,
+        +Drop<TContractState>,
+    > of IGasSponsoredSessionExecute<ComponentState<TContractState>> {
+        fn execute_gas_sponsored_session_tx(
+            ref self: ComponentState<TContractState>,
+            gas_sponsored_session_request: GasSponsoredSessionExecutionRequest,
+            signature: Span<felt252>,
+        ) -> Array<Span<felt252>> {
+            self
+                ._execute_gas_sponsored_session_tx_internal(
+                    gas_sponsored_session_request.into(), signature, SessionKeyVersion::V1,
+                )
+        }
+
+        fn execute_gas_sponsored_session_tx_v2(
+            ref self: ComponentState<TContractState>,
+            gas_sponsored_session_request: GasSponsoredSessionExecutionRequestV2,
+            signature: Span<felt252>,
+        ) -> Array<Span<felt252>> {
+            self
+                ._execute_gas_sponsored_session_tx_internal(
+                    gas_sponsored_session_request, signature, SessionKeyVersion::V2,
+                )
         }
     }
 }
