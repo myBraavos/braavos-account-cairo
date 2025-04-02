@@ -1,9 +1,8 @@
 use core::dict::Felt252DictTrait;
-use traits::Into;
-use traits::TryInto;
+use traits::{Into, TryInto};
 
 fn span_to_dict<T, impl IntoFelt: Into<T, felt252>, impl Copy: Copy<T>>(
-    mut arr: Span<T>, assert_unique: bool
+    mut arr: Span<T>, assert_unique: bool,
 ) -> Felt252Dict<bool> {
     let mut guid_set: Felt252Dict<bool> = Default::default();
     loop {
@@ -14,6 +13,6 @@ fn span_to_dict<T, impl IntoFelt: Into<T, felt252>, impl Copy: Copy<T>>(
             },
             Option::None => { break; },
         };
-    };
+    }
     guid_set
 }

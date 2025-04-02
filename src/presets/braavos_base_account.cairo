@@ -1,7 +1,6 @@
 use array::{ArrayTrait, SpanTrait};
-use starknet::account::Call;
-
 use braavos_account::signers::signers::{StarkPubKey, StarkSignerMethodsTrait};
+use starknet::account::Call;
 
 #[starknet::interface]
 trait IBraavosBaseAccount<T> {
@@ -15,7 +14,7 @@ trait IBraavosBaseAccount<T> {
 
     // Initializer from Braavos Account Factory - generic variant for Base account
     fn initializer_from_factory(
-        ref self: T, stark_pub_key: StarkPubKey, deployment_params: Span<felt252>
+        ref self: T, stark_pub_key: StarkPubKey, deployment_params: Span<felt252>,
     );
 }
 
@@ -32,18 +31,17 @@ trait IBraavosBaseAccount<T> {
 // sig[n - 2: n-1] -  r,s from stark sign on poseidon_hash(sig[2: n-2])
 #[starknet::contract(account)]
 mod BraavosBaseAccount {
-    use starknet::{
-        get_caller_address, get_tx_info, SyscallResultTrait, TxInfo, get_contract_address
-    };
-    use starknet::syscalls::{
-        library_call_syscall, replace_class_syscall, get_execution_info_v2_syscall
-    };
-    use braavos_account::utils::utils::{execute_calls};
     use braavos_account::signers::signer_management::SIG_LEN_STARK;
+    use braavos_account::utils::utils::execute_calls;
+    use starknet::syscalls::{
+        get_execution_info_v2_syscall, library_call_syscall, replace_class_syscall,
+    };
+    use starknet::{
+        SyscallResultTrait, TxInfo, get_caller_address, get_contract_address, get_tx_info,
+    };
     use traits::{Into, TryInto};
-
     use super::{
-        ArrayTrait, Call, IBraavosBaseAccount, SpanTrait, StarkPubKey, StarkSignerMethodsTrait
+        ArrayTrait, Call, IBraavosBaseAccount, SpanTrait, StarkPubKey, StarkSignerMethodsTrait,
     };
 
     mod Consts {
@@ -76,14 +74,14 @@ mod BraavosBaseAccount {
             if caller.is_zero() {
                 assert(
                     stark_pub_key.validate_signature(tx_info.transaction_hash, signature) == true,
-                    Errors::INVALID_TXN_SIG
+                    Errors::INVALID_TXN_SIG,
                 );
             }
 
             // Effective __validate_deploy__ in our base impl scenario - trim leading (r,s) as they
             // are validated above
             _assert_valid_deploy_params(
-                tx_info, stark_pub_key, signature.slice(2, signature.len() - 2)
+                tx_info, stark_pub_key, signature.slice(2, signature.len() - 2),
             );
 
             // Replace to actual impl
@@ -106,13 +104,13 @@ mod BraavosBaseAccount {
 
     /// Validates additional deployment params. Supports both UDC and non UDC deployment
     fn _assert_valid_deploy_params(
-        tx_info: TxInfo, stark_pub_key: StarkPubKey, deploy_params: Span<felt252>
+        tx_info: TxInfo, stark_pub_key: StarkPubKey, deploy_params: Span<felt252>,
     ) {
         let params_len = deploy_params.len();
         assert(*deploy_params.at(params_len - 3) == tx_info.chain_id, Errors::INVALID_AUX_DATA);
         let mut aux_sig_data_span = deploy_params.slice(0, params_len - 2);
         let mut aux_hash = poseidon::poseidon_hash_span(aux_sig_data_span);
-        let aux_sig = array![*deploy_params.at(params_len - 2), *deploy_params.at(params_len - 1),];
+        let aux_sig = array![*deploy_params.at(params_len - 2), *deploy_params.at(params_len - 1)];
 
         assert(
             stark_pub_key.validate_signature(aux_hash, aux_sig.span()) == true,
@@ -123,7 +121,7 @@ mod BraavosBaseAccount {
     #[abi(embed_v0)]
     impl ExternalMethods of IBraavosBaseAccount<ContractState> {
         fn initializer_from_factory(
-            ref self: ContractState, stark_pub_key: StarkPubKey, deployment_params: Span<felt252>
+            ref self: ContractState, stark_pub_key: StarkPubKey, deployment_params: Span<felt252>,
         ) {
             // This function does not limit itself to the factory address to prevent bricking by
             // a malicous factory. A malicous factory could call the ctor without calling this
@@ -132,7 +130,7 @@ mod BraavosBaseAccount {
             // account itself or by any other 3rd party account
             assert(
                 stark_pub_key.pub_key == self.initialization_stark_key.read().pub_key,
-                Errors::NO_REENTRANCE
+                Errors::NO_REENTRANCE,
             );
 
             let tx_info = get_tx_info().unbox();
@@ -177,7 +175,7 @@ mod BraavosBaseAccount {
                 calls.len() == 1
                     && *calls.at(0).to == get_contract_address()
                     && *calls.at(0).selector == Consts::INITIALIZER_FROM_FACTORY_SELECTOR,
-                Errors::NOT_IMPLEMENTED
+                Errors::NOT_IMPLEMENTED,
             );
 
             let init_pub_key = self.initialization_stark_key.read();
@@ -189,14 +187,14 @@ mod BraavosBaseAccount {
                     || (tx_info.signature.len() == SIG_LEN_STARK
                         && init_pub_key
                             .validate_signature(tx_info.transaction_hash, tx_info.signature)),
-                Errors::INVALID_TXN_SIG
+                Errors::INVALID_TXN_SIG,
             );
 
             return starknet::VALIDATED;
         }
 
         fn __validate_deploy__(
-            self: @ContractState, class_hash: felt252, salt: felt252, stark_pub_key: StarkPubKey
+            self: @ContractState, class_hash: felt252, salt: felt252, stark_pub_key: StarkPubKey,
         ) -> felt252 {
             panic_with_felt252(Errors::NOT_IMPLEMENTED);
             0

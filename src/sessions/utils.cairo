@@ -1,11 +1,11 @@
+use braavos_account::sessions::hash::hash_allowed_method;
 use braavos_account::sessions::interface::{
-    CalldataValidation, CalldataValidationSpan, GasSponsoredSessionExecutionRequest,
-    GasSponsoredSessionExecutionRequestV2, SessionExecuteRequest, SessionExecuteRequestV2,
-    SessionExecuteV2, SessionKeyVersion, CalldataValidationType,
+    CalldataValidation, CalldataValidationSpan, CalldataValidationType,
+    GasSponsoredSessionExecutionRequest, GasSponsoredSessionExecutionRequestV2,
+    SessionExecuteRequest, SessionExecuteRequestV2, SessionExecuteV2, SessionKeyVersion,
 };
 use starknet::account::Call;
 use starknet::get_contract_address;
-use braavos_account::sessions::hash::hash_allowed_method;
 
 mod Errors {
     const BAD_CALL_HINT: felt252 = 'BAD_CALL_HINT';

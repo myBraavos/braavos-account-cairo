@@ -6,20 +6,20 @@
 
 #[starknet::component]
 mod MoaSignerManagement {
-    use core::dict::Felt252DictTrait;
     use braavos_account::signers::interface::{
-        IMoaSignManagementInternal, IMoaSignManagementExternal, IMultisig, IMultisigInternal,
-        OwnerAdded, OwnerRemoved, GetMoaSignersResponse
+        GetMoaSignersResponse, IMoaSignManagementExternal, IMoaSignManagementInternal, IMultisig,
+        IMultisigInternal, OwnerAdded, OwnerRemoved,
     };
-    use starknet::{ContractAddress, contract_address_const, TryInto, Into};
-    use core::array::ArrayTrait;
-    use braavos_account::utils::asserts::{assert_self_caller};
-    use braavos_account::utils::arrays::span_to_dict;
-    use braavos_account::signers::signers::{MoaSigner, MoaSignerMethods};
     use braavos_account::signers::signer_address_mgt::{
-        get_signers_by_type, remove_signer, add_signer, exists
+        add_signer, exists, get_signers_by_type, remove_signer,
     };
     use braavos_account::signers::signer_type::SignerType;
+    use braavos_account::signers::signers::{MoaSigner, MoaSignerMethods};
+    use braavos_account::utils::arrays::span_to_dict;
+    use braavos_account::utils::asserts::assert_self_caller;
+    use core::array::ArrayTrait;
+    use core::dict::Felt252DictTrait;
+    use starknet::{ContractAddress, Into, TryInto};
 
     mod Errors {
         const NO_SIGNERS: felt252 = 'NO_SIGNERS';
@@ -71,7 +71,7 @@ mod MoaSignerManagement {
         fn add_external_signers(
             ref self: ComponentState<TContractState>,
             signers: Array<(ContractAddress, felt252)>,
-            threshold: usize
+            threshold: usize,
         ) {
             assert_self_caller();
             self._add_signers(signers, threshold);
@@ -86,7 +86,7 @@ mod MoaSignerManagement {
         fn remove_external_signers(
             ref self: ComponentState<TContractState>,
             mut signer_guids: Span<felt252>,
-            threshold: usize
+            threshold: usize,
         ) {
             assert_self_caller();
             span_to_dict(signer_guids, assert_unique: true);
@@ -95,7 +95,7 @@ mod MoaSignerManagement {
             let existing_signers: Array<felt252> = get_signers_by_type(SignerType::MOA);
             let existing_signers_len: usize = existing_signers.len();
             let mut existing_signers_dict = span_to_dict(
-                existing_signers.span(), assert_unique: false
+                existing_signers.span(), assert_unique: false,
             );
             let resulting_signers_len: usize = existing_signers_len - remove_signers_len;
 
@@ -109,13 +109,13 @@ mod MoaSignerManagement {
                         self
                             .emit(
                                 OwnerRemoved {
-                                    removed_owner_guid: *guid, removed_signer_type: SignerType::MOA
-                                }
+                                    removed_owner_guid: *guid, removed_signer_type: SignerType::MOA,
+                                },
                             );
                     },
                     Option::None => { break; },
                 };
-            };
+            }
 
             self._update_threshold(threshold, resulting_signers_len);
         }
@@ -131,7 +131,7 @@ mod MoaSignerManagement {
     > of IMoaSignManagementInternal<ComponentState<TContractState>> {
         /// Updates threshold if its value has changed
         fn _update_threshold(
-            ref self: ComponentState<TContractState>, threshold: usize, num_signers: usize
+            ref self: ComponentState<TContractState>, threshold: usize, num_signers: usize,
         ) {
             let mut mut_contract = self.get_contract_mut();
             mut_contract._set_multisig_threshold_inner(threshold, num_signers);
@@ -141,13 +141,13 @@ mod MoaSignerManagement {
         fn _add_signers(
             ref self: ComponentState<TContractState>,
             mut signers: Array<(ContractAddress, felt252)>,
-            threshold: usize
+            threshold: usize,
         ) {
             let append_signers_len: usize = signers.len();
             let existing_signers: Array<felt252> = get_signers_by_type(SignerType::MOA);
             let existing_signers_len: usize = existing_signers.len();
             let mut existing_signers_dict = span_to_dict(
-                existing_signers.span(), assert_unique: false
+                existing_signers.span(), assert_unique: false,
             );
             let resulting_signers_len: usize = append_signers_len + existing_signers_len;
 
@@ -158,18 +158,15 @@ mod MoaSignerManagement {
             loop {
                 match signers.pop_front() {
                     Option::Some((
-                        address, pub_key
+                        address, pub_key,
                     )) => {
-                        assert(
-                            pub_key != 0 && address != contract_address_const::<0>(),
-                            'INVALID_SIGNER'
-                        );
+                        assert(pub_key != 0 && address != 0.try_into().unwrap(), 'INVALID_SIGNER');
                         let moa_signer = MoaSigner { pub_key: pub_key, address: address };
                         let guid = moa_signer.guid();
                         assert(!existing_signers_dict.get(guid), Errors::DUPLICATE_SIGNER);
                         assert(
                             address_dup_tracker.get(address.into()) == false,
-                            Errors::DUPLICATE_SIGNER
+                            Errors::DUPLICATE_SIGNER,
                         );
                         address_dup_tracker.insert(address.into(), true);
                         add_signer(SignerType::MOA, guid);
@@ -179,12 +176,12 @@ mod MoaSignerManagement {
                                     new_owner_guid: guid,
                                     signer_type: SignerType::MOA,
                                     signer_data: array![address.into(), pub_key].span(),
-                                }
+                                },
                             );
                     },
                     Option::None => { break; },
                 };
-            };
+            }
 
             self._update_threshold(threshold, resulting_signers_len);
         }

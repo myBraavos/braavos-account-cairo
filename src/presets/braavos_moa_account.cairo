@@ -1,4 +1,4 @@
-const MOA_ACCOUNT_VERSION: felt252 = '001.000.000';
+const MOA_ACCOUNT_VERSION: felt252 = '001.001.000';
 
 /// # BraavosMoaAccount Contract
 ///
@@ -21,35 +21,34 @@ const MOA_ACCOUNT_VERSION: felt252 = '001.000.000';
 
 #[starknet::contract(account)]
 mod BraavosMoaAccount {
-    use core::serde::Serde;
-    use braavos_account::signers::signers::MoaSignerMethodsTrait;
-    use core::box::BoxTrait;
-    use core::array::{SpanTrait, ArrayTrait, SpanSerde};
-    use core::option::OptionTrait;
-    use core::traits::{TryInto, Into};
-    use core::starknet::SyscallResultTrait;
-    use poseidon::poseidon_hash_span;
-    use starknet::{get_tx_info, ContractAddress, get_contract_address, VALIDATED, account::Call};
-    use starknet::syscalls::get_execution_info_v2_syscall;
-
-    use braavos_account::transactions::interface::IPendingTxnInternalTrait;
-    use braavos_account::transactions::moa_tx_hash::calculate_moa_tx_hash;
-    use braavos_account::signers::interface::IMultisig;
-    use braavos_account::utils::arrays::span_to_dict;
-    use braavos_account::signers::signers::StarkPubKey;
-
+    use braavos_account::account::interface::{IBraavosMOA, IGetVersion};
     use braavos_account::introspection::src5::SRC5Component;
+    use braavos_account::signers::interface::IMultisig;
     use braavos_account::signers::moa_signer_management::MoaSignerManagement;
     use braavos_account::signers::multisig::MultisigComponent;
     use braavos_account::signers::signers::{
-        MoaExtSigner, MoaExtSignerHelperMethods, MoaSignerMethods, MoaExtSignerIntoFelt252
+        MoaExtSigner, MoaExtSignerHelperMethods, MoaExtSignerIntoFelt252, MoaSignerMethods,
+        MoaSignerMethodsTrait, StarkPubKey,
     };
     use braavos_account::transactions::daily_txn_limit::DailyTxnLimit;
-    use braavos_account::transactions::moa_tx_hash::calculate_moa_preamble_hash;
+    use braavos_account::transactions::interface::{IPendingTxnInternalTrait, Transaction};
+    use braavos_account::transactions::moa_tx_hash::{
+        calculate_moa_preamble_hash, calculate_moa_tx_hash,
+    };
     use braavos_account::transactions::pending_txn::PendingTransactions;
-    use braavos_account::transactions::interface::Transaction;
     use braavos_account::upgradable::upgradable::UpgradableComponent;
-    use braavos_account::account::interface::{IBraavosMOA, IGetVersion};
+    use braavos_account::utils::arrays::span_to_dict;
+    use core::array::{ArrayTrait, SpanSerde, SpanTrait};
+    use core::box::BoxTrait;
+    use core::option::OptionTrait;
+    use core::serde::Serde;
+    use core::traits::{Into, TryInto};
+    use poseidon::poseidon_hash_span;
+    use starknet::account::Call;
+    use starknet::syscalls::get_execution_info_v2_syscall;
+    use starknet::{
+        ContractAddress, SyscallResultTrait, VALIDATED, get_contract_address, get_tx_info,
+    };
 
     // Introspection
     component!(path: SRC5Component, storage: src5, event: Src5Evt);
@@ -144,7 +143,7 @@ mod BraavosMoaAccount {
 
     #[constructor]
     fn constructor(
-        ref self: ContractState, signers: Array<(ContractAddress, felt252)>, threshold: usize
+        ref self: ContractState, signers: Array<(ContractAddress, felt252)>, threshold: usize,
     ) {
         self.moa_signer_management._add_signers(signers, threshold);
     }
@@ -172,7 +171,7 @@ mod BraavosMoaAccount {
             let is_query_txn_ver = Into::<felt252, u256>::into(tx_info.version).high == 1;
 
             let mut signers = MoaExtSignerHelperMethods::resolve_signers_from_sig(
-                tx_info.signature
+                tx_info.signature,
             );
 
             let mut pending_tx_hash = 0;
@@ -198,7 +197,7 @@ mod BraavosMoaAccount {
                 PendingTransactions::_assert_max_fee_is_set(calls);
                 pending_tx_hash =
                     calculate_moa_tx_hash(
-                        signers.at(0).signer.guid(), tx_info.nonce, calls, signers.len()
+                        signers.at(0).signer.guid(), tx_info.nonce, calls, signers.len(),
                     );
             }
 
@@ -208,7 +207,7 @@ mod BraavosMoaAccount {
                         pending_tx_hash,
                         signers.span(),
                         validate_external: false,
-                        validate_preamble: true
+                        validate_preamble: true,
                     );
             }
 
@@ -253,7 +252,7 @@ mod BraavosMoaAccount {
                 ((*guids.at(0), tx_info.nonce, calls), false)
             };
             let pending_tx_hash = calculate_moa_tx_hash(
-                proposer_guid, nonce, actual_calls, signers.len()
+                proposer_guid, nonce, actual_calls, signers.len(),
             );
 
             let is_query_txn_ver = Into::<felt252, u256>::into(tx_info.version).high == 1;
@@ -263,7 +262,7 @@ mod BraavosMoaAccount {
                         pending_tx_hash,
                         signers.span(),
                         validate_external: true,
-                        validate_preamble: false
+                        validate_preamble: false,
                     );
             }
 
@@ -281,25 +280,25 @@ mod BraavosMoaAccount {
         ///
         /// Panic if amount of confirmations is less than the threshold
         fn is_valid_signature(
-            self: @ContractState, hash: felt252, signature: Span<felt252>
+            self: @ContractState, hash: felt252, signature: Span<felt252>,
         ) -> felt252 {
             let signers = MoaExtSignerHelperMethods::resolve_signers_from_sig(signature);
             self
                 ._assert_signer_validity(
-                    hash, signers.span(), validate_external: true, validate_preamble: true
+                    hash, signers.span(), validate_external: true, validate_preamble: true,
                 );
             span_to_dict(signers.span(), assert_unique: true);
 
             assert(
                 signers.len() >= self.pending_txn._get_adjusted_threshold(),
-                Errors::NOT_ENOUGH_CONFIRMATIONS
+                Errors::NOT_ENOUGH_CONFIRMATIONS,
             );
             VALIDATED
         }
 
         // expected to be deployed via deploy syscall (UDC)
         fn __validate_deploy__(
-            self: @ContractState, signers: Array<(ContractAddress, felt252)>, threshold: usize
+            self: @ContractState, signers: Array<(ContractAddress, felt252)>, threshold: usize,
         ) -> felt252 {
             panic_with_felt252(Errors::NOT_IMPLEMENTED);
             0
@@ -323,7 +322,7 @@ mod BraavosMoaAccount {
         fn _assert_signer_validity(
             self: @ContractState,
             hash: felt252,
-            mut signers: Span::<MoaExtSigner>,
+            mut signers: Span<MoaExtSigner>,
             validate_external: bool,
             validate_preamble: bool,
         ) {
@@ -337,9 +336,9 @@ mod BraavosMoaAccount {
                                 signer
                                     .signer
                                     .validate_signature(
-                                        ext_sig_hash, *signer.preamble_r, *signer.preamble_s
+                                        ext_sig_hash, *signer.preamble_r, *signer.preamble_s,
                                     ),
-                                Errors::INVALID_SIGNATURE
+                                Errors::INVALID_SIGNATURE,
                             );
                         }
                         if (validate_external) {
@@ -357,7 +356,7 @@ mod BraavosMoaAccount {
         }
 
         fn _extract_fee_limits(
-            self: @ContractState, calls: Span<Call>, should_execute: bool
+            self: @ContractState, calls: Span<Call>, should_execute: bool,
         ) -> (u128, u128) {
             // structure should be:
             // [executing_fee_limit_eth, executing_fee_limit_stark, signing_fee_limit_eth,
@@ -389,7 +388,7 @@ mod BraavosMoaAccount {
         }
 
         fn _parse_sign_pending_calldata(
-            self: @ContractState, calldata: Span<felt252>
+            self: @ContractState, calldata: Span<felt252>,
         ) -> (felt252, felt252, Span<Call>) {
             // 0 - proposer_guid, 1 - pending_nonce, 2+ - calls
             let mut callspan = calldata.slice(2, calldata.len() - 2);

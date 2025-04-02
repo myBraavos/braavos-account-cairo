@@ -1,52 +1,44 @@
-use braavos_account::utils::snip12::{calculate_snip12_hash, hash_call};
 use braavos_account::sessions::interface::{
     CalldataValidation, GasSponsoredSessionExecutionRequest, GasSponsoredSessionExecutionRequestV2,
     SessionExecute, SessionExecuteV2, SessionKeyVersion, TokenAmount,
 };
+use braavos_account::utils::snip12::{calculate_snip12_hash, hash_call};
 use poseidon::poseidon_hash_span;
 use starknet::ContractAddress;
 
 const U256_TYPE_HASH: felt252 = selector!("\"u256\"(\"low\":\"u128\",\"high\":\"u128\")");
 
-const CALLDATA_VALIDATION_TYPE_HASH: felt252 =
-    selector!(
-        "\"CalldataValidation\"(\"Offset\":\"u128\",\"Value\":\"felt\",\"Validation Type\":\"u128\")",
-    );
+const CALLDATA_VALIDATION_TYPE_HASH: felt252 = selector!(
+    "\"CalldataValidation\"(\"Offset\":\"u128\",\"Value\":\"felt\",\"Validation Type\":\"u128\")",
+);
 
-const ALLOWED_METHOD_TYPE_HASH: felt252 =
-    selector!(
-        "\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\")"
-    );
+const ALLOWED_METHOD_TYPE_HASH: felt252 = selector!(
+    "\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\")",
+);
 
-const ALLOWED_METHOD_TYPE_HASH_V2: felt252 =
-    selector!(
-        "\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\",\"Calldata Validations\":\"CalldataValidation*\")\"CalldataValidation\"(\"Offset\":\"u128\",\"Value\":\"felt\",\"Validation Type\":\"u128\")",
-    );
+const ALLOWED_METHOD_TYPE_HASH_V2: felt252 = selector!(
+    "\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\",\"Calldata Validations\":\"CalldataValidation*\")\"CalldataValidation\"(\"Offset\":\"u128\",\"Value\":\"felt\",\"Validation Type\":\"u128\")",
+);
 
-const TOKEN_AMOUNT_TYPE_HASH: felt252 =
-    selector!(
-        "\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")"
-    );
+const TOKEN_AMOUNT_TYPE_HASH: felt252 = selector!(
+    "\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")",
+);
 
-const GAS_SPONSORED_SESSION_EXECUTION_TYPE_HASH: felt252 =
-    selector!(
-        "\"GasSponsoredSessionExecution\"(\"Caller\":\"ContractAddress\",\"Execute After\":\"timestamp\",\"Execute Before\":\"timestamp\",\"Allowed Methods\":\"AllowedMethod*\",\"Spending Limits\":\"TokenAmount*\")\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\")\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")"
-    );
+const GAS_SPONSORED_SESSION_EXECUTION_TYPE_HASH: felt252 = selector!(
+    "\"GasSponsoredSessionExecution\"(\"Caller\":\"ContractAddress\",\"Execute After\":\"timestamp\",\"Execute Before\":\"timestamp\",\"Allowed Methods\":\"AllowedMethod*\",\"Spending Limits\":\"TokenAmount*\")\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\")\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")",
+);
 
-const GAS_SPONSORED_SESSION_EXECUTION_TYPE_HASH_V2: felt252 =
-    selector!(
-        "\"GasSponsoredSessionExecution\"(\"Caller\":\"ContractAddress\",\"Execute After\":\"timestamp\",\"Execute Before\":\"timestamp\",\"Allowed Methods\":\"AllowedMethod*\",\"Spending Limits\":\"TokenAmount*\")\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\",\"Calldata Validations\":\"CalldataValidation*\")\"CalldataValidation\"(\"Offset\":\"u128\",\"Value\":\"felt\",\"Validation Type\":\"u128\")\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")",
-    );
+const GAS_SPONSORED_SESSION_EXECUTION_TYPE_HASH_V2: felt252 = selector!(
+    "\"GasSponsoredSessionExecution\"(\"Caller\":\"ContractAddress\",\"Execute After\":\"timestamp\",\"Execute Before\":\"timestamp\",\"Allowed Methods\":\"AllowedMethod*\",\"Spending Limits\":\"TokenAmount*\")\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\",\"Calldata Validations\":\"CalldataValidation*\")\"CalldataValidation\"(\"Offset\":\"u128\",\"Value\":\"felt\",\"Validation Type\":\"u128\")\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")",
+);
 
-const SESSION_EXECUTION_TYPE_HASH: felt252 =
-    selector!(
-        "\"SessionExecution\"(\"Owner Public Key\":\"felt\",\"Execute After\":\"timestamp\",\"Execute Before\":\"timestamp\",\"STRK Gas Limit\":\"u128\",\"Allowed Methods\":\"AllowedMethod*\",\"Spending Limits\":\"TokenAmount*\")\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\")\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")"
-    );
+const SESSION_EXECUTION_TYPE_HASH: felt252 = selector!(
+    "\"SessionExecution\"(\"Owner Public Key\":\"felt\",\"Execute After\":\"timestamp\",\"Execute Before\":\"timestamp\",\"STRK Gas Limit\":\"u128\",\"Allowed Methods\":\"AllowedMethod*\",\"Spending Limits\":\"TokenAmount*\")\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\")\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")",
+);
 
-const SESSION_EXECUTION_TYPE_HASH_V2: felt252 =
-    selector!(
-        "\"SessionExecution\"(\"Owner Public Key\":\"felt\",\"Execute After\":\"timestamp\",\"Execute Before\":\"timestamp\",\"STRK Gas Limit\":\"u128\",\"Allowed Methods\":\"AllowedMethod*\",\"Spending Limits\":\"TokenAmount*\")\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\",\"Calldata Validations\":\"CalldataValidation*\")\"CalldataValidation\"(\"Offset\":\"u128\",\"Value\":\"felt\",\"Validation Type\":\"u128\")\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")",
-    );
+const SESSION_EXECUTION_TYPE_HASH_V2: felt252 = selector!(
+    "\"SessionExecution\"(\"Owner Public Key\":\"felt\",\"Execute After\":\"timestamp\",\"Execute Before\":\"timestamp\",\"STRK Gas Limit\":\"u128\",\"Allowed Methods\":\"AllowedMethod*\",\"Spending Limits\":\"TokenAmount*\")\"AllowedMethod\"(\"Contract Address\":\"ContractAddress\",\"Selector\":\"selector\",\"Calldata Validations\":\"CalldataValidation*\")\"CalldataValidation\"(\"Offset\":\"u128\",\"Value\":\"felt\",\"Validation Type\":\"u128\")\"TokenAmount\"(\"token_address\":\"ContractAddress\",\"amount\":\"u256\")\"u256\"(\"low\":\"u128\",\"high\":\"u128\")",
+);
 
 fn get_gas_sponsored_session_execution_type_hash(
     session_key_version: SessionKeyVersion,
@@ -104,7 +96,7 @@ fn hash_gas_sponsored_session_execution(
             hash_allowed_methods_guids(*execution.allowed_method_guids),
             hash_spending_limits(*execution.spending_limits),
         ]
-            .span()
+            .span(),
     )
 }
 
@@ -136,7 +128,7 @@ fn hash_session_execute(
             hash_allowed_methods_guids(*request.allowed_method_guids),
             hash_spending_limits(*request.spending_limits),
         ]
-            .span()
+            .span(),
     )
 }
 
@@ -154,7 +146,7 @@ fn hash_spending_limits(mut spending_limits: Span<TokenAmount>) -> felt252 {
             },
             Option::None(_) => { break; },
         };
-    };
+    }
     poseidon_hash_span(hashed_token_amounts.span())
 }
 
@@ -164,9 +156,9 @@ fn hash_token_amount(token_amount: @TokenAmount) -> felt252 {
         array![
             TOKEN_AMOUNT_TYPE_HASH,
             (*token_amount.token_address).into(),
-            hash_u256(*token_amount.amount)
+            hash_u256(*token_amount.amount),
         ]
-            .span()
+            .span(),
     )
 }
 
@@ -191,7 +183,7 @@ fn hash_calldata_validations(mut calldata_validations: Span<CalldataValidation>)
             },
             Option::None(_) => { break; },
         };
-    };
+    }
     poseidon_hash_span(hashed_calldata_validations.span())
 }
 

@@ -1,12 +1,14 @@
-use starknet::{get_contract_address, get_caller_address, get_block_timestamp};
 use starknet::account::Call;
+use starknet::{get_block_timestamp, get_caller_address, get_contract_address};
 
 mod Consts {
     const OUTSIDE_EXECUTION_SELECTOR: felt252 = selector!("execute_from_outside_v2");
-    const GAS_SPONSORED_SESSION_EXECUTION_SELECTOR: felt252 =
-        selector!("execute_gas_sponsored_session_tx");
-    const GAS_SPONSORED_SESSION_EXECUTION_V2_SELECTOR: felt252 =
-        selector!("execute_gas_sponsored_session_tx_v2");
+    const GAS_SPONSORED_SESSION_EXECUTION_SELECTOR: felt252 = selector!(
+        "execute_gas_sponsored_session_tx",
+    );
+    const GAS_SPONSORED_SESSION_EXECUTION_V2_SELECTOR: felt252 = selector!(
+        "execute_gas_sponsored_session_tx_v2",
+    );
 }
 
 fn assert_self_caller() {
@@ -36,7 +38,7 @@ fn assert_no_oe_self_calls(mut calls: Span<Call>) {
             Option::Some(call) => {
                 assert(
                     *call.to != self_address || !is_oe_self_call_selector(*call.selector),
-                    'SELF_CALL'
+                    'SELF_CALL',
                 );
             },
             Option::None(_) => { break; },

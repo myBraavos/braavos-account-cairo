@@ -1,11 +1,11 @@
-use core::result::ResultTrait;
-use traits::{Into, TryInto};
 use array::{ArrayTrait, SpanTrait};
+use braavos_account::signers::interface::GetSignersResponse;
+use braavos_account::signers::signer_type::SignerType;
+use core::result::ResultTrait;
 use starknet::storage_access::{
-    StoreFelt252, StorageBaseAddress, storage_base_address_from_felt252, storage_base_address_const
+    StorageBaseAddress, StoreFelt252, storage_base_address_const, storage_base_address_from_felt252,
 };
-use braavos_account::signers::interface::{GetSignersResponse};
-use braavos_account::signers::signer_type::{SignerType};
+use traits::{Into, TryInto};
 
 mod Consts {
     const EMPTY_GUID: felt252 = 0;
@@ -72,7 +72,7 @@ fn get_first_signer(signer_type: SignerType) -> felt252 {
             break;
         }
         offset = offset + 1;
-    };
+    }
     return first_signer;
 }
 
@@ -112,7 +112,7 @@ fn remove_all_signers(signer_type: SignerType) -> Array<felt252> {
             StoreFelt252::write_at_offset(0, address, offset, Consts::DELETED_GUID).is_ok();
         }
         offset = offset + 1;
-    };
+    }
     return result;
 }
 
@@ -130,7 +130,7 @@ fn get_signers_by_type(signer_type: SignerType) -> Array<felt252> {
             result.append(guid);
         }
         offset = offset + 1;
-    };
+    }
     return result;
 }
 
@@ -168,7 +168,7 @@ fn exists(signer_type: SignerType, signer_guid: felt252) -> bool {
             break;
         }
         offset = offset + 1;
-    };
+    }
     return found;
 }
 
@@ -187,7 +187,7 @@ fn any(signer_type: SignerType) -> bool {
             break;
         }
         offset = offset + 1;
-    };
+    }
     return found;
 }
 

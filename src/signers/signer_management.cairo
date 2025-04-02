@@ -1,10 +1,9 @@
 use array::{ArrayTrait, SpanTrait};
+use braavos_account::signers::interface::GetSignersResponse;
+use braavos_account::signers::signer_type::SignerType;
 use core::result::ResultTrait;
-use traits::{Into, TryInto};
 use option::OptionTrait;
-
-use braavos_account::signers::signer_type::{SignerType};
-use braavos_account::signers::interface::{GetSignersResponse};
+use traits::{Into, TryInto};
 
 const SIG_LEN_STARK: usize = 2;
 const PUBLIC_KEY_LEN_SECP256R1: usize = 4;
@@ -13,20 +12,20 @@ const RS_LEN_SECP256R1: usize = 4;
 
 #[starknet::component]
 mod SignerManagementComponent {
-    use starknet::{SyscallResultTrait};
-    use starknet::syscalls::get_execution_info_v2_syscall;
     use braavos_account::dwl::interface::IDwlInternal;
     use braavos_account::signers::interface;
     use braavos_account::signers::interface::{OwnerAdded, OwnerRemoved};
     use braavos_account::signers::signer_address_mgt::{
-        remove_signer, remove_all_signers, get_first_signer, num_strong_signers, exists,
-        any_strong_signer, get_signers
+        any_strong_signer, exists, get_first_signer, get_signers, num_strong_signers,
+        remove_all_signers, remove_signer,
+    };
+    use braavos_account::signers::signers::{
+        Secp256r1PubKey, Secp256r1SignerMethodsTrait, StarkPubKey, StarkSignerMethodsTrait,
     };
     use braavos_account::utils::asserts::assert_self_caller;
-    use super::{SignerType};
-    use braavos_account::signers::signers::{
-        Secp256r1PubKey, Secp256r1SignerMethodsTrait, StarkPubKey, StarkSignerMethodsTrait
-    };
+    use starknet::SyscallResultTrait;
+    use starknet::syscalls::get_execution_info_v2_syscall;
+    use super::SignerType;
 
     mod Errors {
         const INVALID_ENTRYPOINT: felt252 = 'INVALID_ENTRYPOINT';
@@ -41,8 +40,9 @@ mod SignerManagementComponent {
         const ACCOUNT_DEFAULT_ETD_SEC: u64 = 345600_u64; // 4 days == 24 * 4 * 60 * 60
         const ACCOUNT_MAX_ETD_SEC: u64 = 31536000_u64; // 365 days == 365 * 24 * 60 60
         const ACCOUNT_MIN_ETD_SEC: u64 = 86400_u64; // 1 day == 24 * 60 * 60
-        const DEFERRED_REMOVE_SECP256R1_SIGNERS_SELECTOR: felt252 =
-            selector!("deferred_remove_signers");
+        const DEFERRED_REMOVE_SECP256R1_SIGNERS_SELECTOR: felt252 = selector!(
+            "deferred_remove_signers",
+        );
     }
 
     #[derive(Copy, Drop, Serde, starknet::Event, starknet::Store)]
@@ -77,7 +77,7 @@ mod SignerManagementComponent {
     }
 
     fn _is_deferred_req_expired(
-        deferred_req: DeferredRemoveSignerRequest, block_timestamp: u64
+        deferred_req: DeferredRemoveSignerRequest, block_timestamp: u64,
     ) -> bool {
         deferred_req.expire_at != 0 && deferred_req.expire_at < block_timestamp
     }
@@ -102,7 +102,7 @@ mod SignerManagementComponent {
                         new_owner_guid: stark_pub_key.pub_key,
                         signer_type: SignerType::Stark,
                         signer_data: array![].span(),
-                    }
+                    },
                 );
         }
 
@@ -111,7 +111,7 @@ mod SignerManagementComponent {
         fn _add_secp256r1_signer_unsafe(
             ref self: ComponentState<TContractState>,
             secp256r1_signer: Secp256r1PubKey,
-            signer_type: SignerType
+            signer_type: SignerType,
         ) {
             secp256r1_signer.add_signer(signer_type);
             self
@@ -123,17 +123,17 @@ mod SignerManagementComponent {
                             secp256r1_signer.pub_x.low.into(),
                             secp256r1_signer.pub_x.high.into(),
                             secp256r1_signer.pub_y.low.into(),
-                            secp256r1_signer.pub_y.high.into()
+                            secp256r1_signer.pub_y.high.into(),
                         ]
                             .span(),
-                    }
+                    },
                 );
         }
 
         /// When removing signer not as an etd endpoint this function will remove existing
         /// deferred removal requests
         fn _handle_deferred_request_when_signer_removal(
-            ref self: ComponentState<TContractState>, expired_etd: bool
+            ref self: ComponentState<TContractState>, expired_etd: bool,
         ) {
             // If we came from a non-etd removal flow, then send the cancel event
             if !expired_etd {
@@ -144,8 +144,8 @@ mod SignerManagementComponent {
                     self
                         .emit(
                             DeferredRemoveSignerRequestCancelled {
-                                cancelled_deferred_request: deferred_req
-                            }
+                                cancelled_deferred_request: deferred_req,
+                            },
                         );
                 }
             }
@@ -158,21 +158,21 @@ mod SignerManagementComponent {
             ref self: ComponentState<TContractState>,
             expired_etd: bool,
             existing_guid: felt252,
-            signer_type: SignerType
+            signer_type: SignerType,
         ) {
             remove_signer(signer_type, existing_guid);
             self
                 .emit(
                     OwnerRemoved {
-                        removed_owner_guid: existing_guid, removed_signer_type: signer_type
-                    }
+                        removed_owner_guid: existing_guid, removed_signer_type: signer_type,
+                    },
                 );
             self._handle_deferred_request_when_signer_removal(expired_etd);
         }
 
         /// Removes all strong signers from account
         fn _remove_all_secp256r1_signers_unsafe(
-            ref self: ComponentState<TContractState>, expired_etd: bool
+            ref self: ComponentState<TContractState>, expired_etd: bool,
         ) {
             let mut removed_webauthn_signers = remove_all_signers(SignerType::Webauthn);
             let mut removed_hws_signers = remove_all_signers(SignerType::Secp256r1);
@@ -184,13 +184,13 @@ mod SignerManagementComponent {
                             .emit(
                                 OwnerRemoved {
                                     removed_owner_guid: guid,
-                                    removed_signer_type: SignerType::Webauthn
-                                }
+                                    removed_signer_type: SignerType::Webauthn,
+                                },
                             );
                     },
-                    Option::None(_) => { break; }
+                    Option::None(_) => { break; },
                 };
-            };
+            }
             loop {
                 match removed_hws_signers.pop_front() {
                     Option::Some(guid) => {
@@ -198,13 +198,13 @@ mod SignerManagementComponent {
                             .emit(
                                 OwnerRemoved {
                                     removed_owner_guid: guid,
-                                    removed_signer_type: SignerType::Secp256r1
-                                }
+                                    removed_signer_type: SignerType::Secp256r1,
+                                },
                             );
                     },
-                    Option::None(_) => { break; }
+                    Option::None(_) => { break; },
                 };
-            };
+            }
 
             self._handle_deferred_request_when_signer_removal(expired_etd);
         }
@@ -213,7 +213,7 @@ mod SignerManagementComponent {
         /// strong signers. After removing all strong signers it also removes multisig thresholds
         /// and any existing withdrawal limits.
         fn _apply_deferred_remove_signers_req(
-            ref self: ComponentState<TContractState>, block_timestamp: u64
+            ref self: ComponentState<TContractState>, block_timestamp: u64,
         ) {
             let deferred_req = self.deferred_remove_signer_req.read();
             let mut mut_contract = self.get_contract_mut();
@@ -221,8 +221,8 @@ mod SignerManagementComponent {
                 self
                     .emit(
                         DeferredRemoveSignerRequestExpired {
-                            expired_deferred_request: deferred_req
-                        }
+                            expired_deferred_request: deferred_req,
+                        },
                     );
                 // Deferred removal removes all strong signers so multisig and DWL should be
                 // disabled
@@ -266,16 +266,16 @@ mod SignerManagementComponent {
             ref self: ComponentState<TContractState>,
             secp256r1_signer: Secp256r1PubKey,
             signer_type: SignerType,
-            multisig_threshold: usize
+            multisig_threshold: usize,
         ) {
             assert_self_caller();
             assert(
                 signer_type == SignerType::Secp256r1 || signer_type == SignerType::Webauthn,
-                Errors::INVALID_SIGNER
+                Errors::INVALID_SIGNER,
             );
             assert(
                 Secp256r1SignerMethodsTrait::assert_valid_point(@secp256r1_signer),
-                Errors::INVALID_SIGNER
+                Errors::INVALID_SIGNER,
             );
             self._add_secp256r1_signer_unsafe(secp256r1_signer, signer_type);
             let mut mut_contract = self.get_contract_mut();
@@ -283,7 +283,7 @@ mod SignerManagementComponent {
             if (multisig_threshold != curr_multisig_thresh) {
                 mut_contract
                     ._set_multisig_threshold_inner(
-                        multisig_threshold, num_signers: num_strong_signers() + 1
+                        multisig_threshold, num_signers: num_strong_signers() + 1,
                     );
             }
         }
@@ -297,19 +297,19 @@ mod SignerManagementComponent {
             ref self: ComponentState<TContractState>,
             guid: felt252,
             signer_type: SignerType,
-            multisig_threshold: usize
+            multisig_threshold: usize,
         ) {
             assert_self_caller();
             let mut mut_contract = self.get_contract_mut();
             assert(
                 signer_type == SignerType::Secp256r1 || signer_type == SignerType::Webauthn,
-                Errors::INVALID_SIGNER
+                Errors::INVALID_SIGNER,
             );
             assert(exists(signer_type, guid), Errors::SIGNER_NOT_EXISTS);
 
             self
                 ._remove_secp256r1_signer_common_unsafe(
-                    expired_etd: false, existing_guid: guid, signer_type: signer_type
+                    expired_etd: false, existing_guid: guid, signer_type: signer_type,
                 );
 
             let num_of_strong_signers = num_strong_signers();
@@ -326,7 +326,7 @@ mod SignerManagementComponent {
                 // Note the + 1 represents the stark signer
                 mut_contract
                     ._set_multisig_threshold_inner(
-                        multisig_threshold, num_signers: num_strong_signers() + 1
+                        multisig_threshold, num_signers: num_strong_signers() + 1,
                     );
                 if multisig_threshold == 0 && mut_contract._get_withdrawal_limit_high_inner() != 0 {
                     mut_contract._set_withdrawal_limit_high_inner(0, 0, 0, false, false);
@@ -342,21 +342,21 @@ mod SignerManagementComponent {
             ref self: ComponentState<TContractState>,
             secp256r1_signer: Secp256r1PubKey,
             existing_guid: felt252,
-            signer_type: SignerType
+            signer_type: SignerType,
         ) {
             assert_self_caller();
             assert(
                 signer_type == SignerType::Secp256r1 || signer_type == SignerType::Webauthn,
-                Errors::INVALID_SIGNER
+                Errors::INVALID_SIGNER,
             );
             assert(exists(signer_type, existing_guid), Errors::SIGNER_NOT_EXISTS);
             assert(
                 Secp256r1SignerMethodsTrait::assert_valid_point(@secp256r1_signer),
-                Errors::INVALID_SIGNER
+                Errors::INVALID_SIGNER,
             );
             self
                 ._remove_secp256r1_signer_common_unsafe(
-                    expired_etd: false, existing_guid: existing_guid, signer_type: signer_type
+                    expired_etd: false, existing_guid: existing_guid, signer_type: signer_type,
                 );
             self._add_secp256r1_signer_unsafe(secp256r1_signer, signer_type);
         }
@@ -367,7 +367,7 @@ mod SignerManagementComponent {
             assert(
                 time_delay >= Consts::ACCOUNT_MIN_ETD_SEC
                     && time_delay <= Consts::ACCOUNT_MAX_ETD_SEC,
-                Errors::INVALID_ETD
+                Errors::INVALID_ETD,
             );
             let deferred_req: DeferredRemoveSignerRequest = self.deferred_remove_signer_req.read();
             assert(deferred_req.expire_at == 0, Errors::INVALID_ENTRYPOINT);
@@ -386,7 +386,7 @@ mod SignerManagementComponent {
 
         /// Fetches existing request of signer deferred removal
         fn get_deferred_remove_signers(
-            self: @ComponentState<TContractState>
+            self: @ComponentState<TContractState>,
         ) -> DeferredRemoveSignerRequest {
             self.deferred_remove_signer_req.read()
         }
@@ -425,10 +425,10 @@ mod SignerManagementComponent {
             self
                 .emit(
                     DeferredRemoveSignerRequestCancelled {
-                        cancelled_deferred_request: deferred_req
-                    }
+                        cancelled_deferred_request: deferred_req,
+                    },
                 );
-            self.deferred_remove_signer_req.write(DeferredRemoveSignerRequest { expire_at: 0, });
+            self.deferred_remove_signer_req.write(DeferredRemoveSignerRequest { expire_at: 0 });
         }
     }
 }

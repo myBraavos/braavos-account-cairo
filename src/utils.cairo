@@ -1,5 +1,5 @@
-mod utils;
+mod arrays;
 mod asserts;
 mod hash;
-mod arrays;
 mod snip12;
+mod utils;

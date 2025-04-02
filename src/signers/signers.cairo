@@ -1,25 +1,23 @@
-use core::starknet::SyscallResultTrait;
-use core::result::ResultTrait;
-use core::clone::Clone;
 use array::{ArrayTrait, SpanTrait};
+use braavos_account::utils::hash::sha256_u32;
+use core::clone::Clone;
+use core::result::ResultTrait;
 use ecdsa::check_ecdsa_signature;
-use option::{OptionTrait};
+use option::OptionTrait;
 use serde::Serde;
-use starknet::{library_call_syscall, ContractAddress, call_contract_syscall};
 use starknet::secp256_trait::{Secp256PointTrait, Signature, is_valid_signature};
 use starknet::secp256r1::{Secp256r1Impl, Secp256r1Point, Secp256r1PointImpl};
+use starknet::{ContractAddress, SyscallResultTrait, call_contract_syscall, library_call_syscall};
 use traits::{Into, TryInto};
-
-use braavos_account::utils::hash::sha256_u32;
+use super::signer_address_mgt::{add_signer, exists};
+use super::signer_management::SignerType;
 use super::super::utils::utils::{
-    u32_shr_div_for_pos, reconstruct_hash_from_challenge, concat_u32_with_padding, IntoOrPanic
+    IntoOrPanic, concat_u32_with_padding, reconstruct_hash_from_challenge, u32_shr_div_for_pos,
 };
-use super::signer_management::{SignerType,};
-use super::signer_address_mgt::{exists, add_signer};
 
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct StarkPubKey {
-    pub_key: felt252
+    pub_key: felt252,
 }
 
 #[generate_trait]
@@ -53,7 +51,7 @@ impl StarkSignerMethods of StarkSignerMethodsTrait {
 #[derive(Copy, Drop, Serde, starknet::Store)]
 struct Secp256r1PubKey {
     pub_x: u256,
-    pub_y: u256
+    pub_y: u256,
 }
 
 
@@ -65,30 +63,30 @@ impl Secp256r1SignerMethods of Secp256r1SignerMethodsTrait {
         let sig = Signature {
             r: u256 {
                 low: (*signature.at(0)).try_into().unwrap(),
-                high: (*signature.at(1)).try_into().unwrap()
+                high: (*signature.at(1)).try_into().unwrap(),
             },
             s: u256 {
                 low: (*signature.at(2)).try_into().unwrap(),
-                high: (*signature.at(3)).try_into().unwrap()
+                high: (*signature.at(3)).try_into().unwrap(),
             },
             y_parity: false,
         };
         is_valid_signature::<
-            Secp256r1Point
+            Secp256r1Point,
         >(
             hash_u256,
             sig.r,
             sig.s,
             Secp256r1Impl::secp256_ec_new_syscall(*self.pub_x, *self.pub_y)
                 .unwrap_syscall()
-                .unwrap()
+                .unwrap(),
         )
     }
 
     /// Returns true if the given signature is a valid webauthn signature
     /// Signature contains all required payload including client data and auth data
     fn validate_webauthn_signature(
-        self: @Secp256r1PubKey, hash: felt252, signature: Span<felt252>
+        self: @Secp256r1PubKey, hash: felt252, signature: Span<felt252>,
     ) -> bool {
         let mut offset = 0;
         let auth_data_len = (*signature.at(offset)).try_into().unwrap();
@@ -120,7 +118,7 @@ impl Secp256r1SignerMethods of Secp256r1SignerMethodsTrait {
         assert(
             challenge_offset
                 + challenge_len < ((cdata_offset + client_data_len) * 4 - client_data_u32s_padding),
-            'INVALID_CHALLENGE_OFFSET'
+            'INVALID_CHALLENGE_OFFSET',
         );
         // Assert that the challenge is enclosed in double quotes
         let char_before_offset = challenge_offset_u32
@@ -149,14 +147,14 @@ impl Secp256r1SignerMethods of Secp256r1SignerMethodsTrait {
         let base64_padding: u8 = (*signature.at(offset + 2)).try_into().unwrap();
         // challange hash is byte aligned so only 2**P where P E { 8n mod 6 | n E N} are valid
         assert(
-            base64_padding == 0 || base64_padding == 4 || base64_padding == 16, 'INVALID_PADDING'
+            base64_padding == 0 || base64_padding == 4 || base64_padding == 16, 'INVALID_PADDING',
         );
         let challenge_len_with_rem = challenge_end_offset_u32 - challenge_offset_u32 + 1;
         let mut challenge_with_rem = signature
             .slice(cdata_offset + challenge_offset_u32, challenge_len_with_rem);
 
         let reconstructed_hash = reconstruct_hash_from_challenge(
-            ref challenge_with_rem, challenge_offset_u32_rem, challenge_len, base64_padding
+            ref challenge_with_rem, challenge_offset_u32_rem, challenge_len, base64_padding,
         );
         assert(hash == reconstructed_hash, 'RECONSTRUCTED_HASH_MISMATCH');
         offset += 3;
@@ -167,38 +165,38 @@ impl Secp256r1SignerMethods of Secp256r1SignerMethodsTrait {
         assert(force_cairo_impl == @0, 'INVALID_DEPRECATED');
         let mut cdata_u32s: Array<u32> = client_data.into_or_panic();
         let mut cdata_hash = sha256_u32(
-            cdata_u32s, client_data_last_word, client_data_u32s_padding
+            cdata_u32s, client_data_last_word, client_data_u32s_padding,
         );
 
         let (auth_data_cdata_concat, auth_data_cdata_concat_last_word) = concat_u32_with_padding(
-            auth_data, ref cdata_hash, auth_data_u32s_padding
+            auth_data, ref cdata_hash, auth_data_u32s_padding,
         );
         let webauthn_hash = sha256_u32(
             auth_data_cdata_concat.span().into_or_panic(),
             auth_data_cdata_concat_last_word,
-            auth_data_u32s_padding
+            auth_data_u32s_padding,
         )
             .into_or_panic();
 
         // Verify sig matches webauthn hash
         let sig = Signature {
             r: u256 {
-                low: (*sig_rs.at(0)).try_into().unwrap(), high: (*sig_rs.at(1)).try_into().unwrap()
+                low: (*sig_rs.at(0)).try_into().unwrap(), high: (*sig_rs.at(1)).try_into().unwrap(),
             },
             s: u256 {
-                low: (*sig_rs.at(2)).try_into().unwrap(), high: (*sig_rs.at(3)).try_into().unwrap()
+                low: (*sig_rs.at(2)).try_into().unwrap(), high: (*sig_rs.at(3)).try_into().unwrap(),
             },
             y_parity: false,
         };
         is_valid_signature::<
-            Secp256r1Point
+            Secp256r1Point,
         >(
             webauthn_hash,
             sig.r,
             sig.s,
             Secp256r1Impl::secp256_ec_new_syscall(*self.pub_x, *self.pub_y)
                 .unwrap_syscall()
-                .unwrap()
+                .unwrap(),
         )
     }
 
@@ -239,9 +237,9 @@ impl Secp256r1SignerMethods of Secp256r1SignerMethodsTrait {
     /// Adds this signer pub key to the account storage
     fn add_signer(self: @Secp256r1PubKey, signer_type: SignerType) {
         if signer_type == SignerType::Secp256r1 {
-            add_signer(SignerType::Secp256r1, self.guid(),);
+            add_signer(SignerType::Secp256r1, self.guid());
         } else if signer_type == SignerType::Webauthn {
-            add_signer(SignerType::Webauthn, self.guid(),);
+            add_signer(SignerType::Webauthn, self.guid());
         }
     }
 }
@@ -258,7 +256,7 @@ struct MoaExtSigner {
     signer: MoaSigner,
     preamble_r: felt252,
     preamble_s: felt252,
-    ext_sig: Span<felt252>
+    ext_sig: Span<felt252>,
 }
 
 impl MoaExtSignerIntoFelt252 of Into<MoaExtSigner, felt252> {
@@ -274,7 +272,7 @@ impl MoaExtSignerHelperMethods of MoaExtSignerHelperMethodsTrait {
     /// ...etc]
     /// The parsing here allows duplicates. They are filtered later.
     /// @return The list of signers from the transaction signature
-    fn resolve_signers_from_sig(signature: Span<felt252>) -> Array::<MoaExtSigner> {
+    fn resolve_signers_from_sig(signature: Span<felt252>) -> Array<MoaExtSigner> {
         let mut signers = ArrayTrait::<MoaExtSigner>::new();
 
         let mut i = 0;
@@ -296,11 +294,11 @@ impl MoaExtSignerHelperMethods of MoaExtSignerHelperMethodsTrait {
                         signer: inner_signer,
                         preamble_r: *signature.at(i + 3),
                         preamble_s: *signature.at(i + 4),
-                        ext_sig: signature.slice(i + 6, sig_len)
-                    }
+                        ext_sig: signature.slice(i + 6, sig_len),
+                    },
                 );
             i += 6 + sig_len;
-        };
+        }
         assert(signers.len() > 0, 'INVALID_SIG');
         signers
     }
@@ -313,7 +311,7 @@ impl MoaExtSignerHelperMethods of MoaExtSignerHelperMethodsTrait {
                 Option::Some(signer) => { guids.append(signer.signer.guid()); },
                 Option::None(_) => { break (); },
             };
-        };
+        }
 
         guids
     }
@@ -327,7 +325,7 @@ mod MoaConsts {
 impl MoaSignerMethods of MoaSignerMethodsTrait {
     /// Returns true if given signature is valid
     fn validate_signature(
-        self: @MoaSigner, hash: felt252, preamble_r: felt252, preamble_s: felt252
+        self: @MoaSigner, hash: felt252, preamble_r: felt252, preamble_s: felt252,
     ) -> bool {
         check_ecdsa_signature(hash, *self.pub_key, preamble_r, preamble_s)
     }
@@ -343,13 +341,13 @@ impl MoaSignerMethods of MoaSignerMethodsTrait {
         sig.serialize(ref calldata);
 
         let res = call_contract_syscall(
-            *self.address, MoaConsts::IS_VALID_SIGNATURE_FUNCTION_SELECTOR, calldata.span()
+            *self.address, MoaConsts::IS_VALID_SIGNATURE_FUNCTION_SELECTOR, calldata.span(),
         )
             .unwrap_syscall();
 
         assert(res.len() == 1, 'INVALID_SIG_RESULT_LENGTH');
         assert(
-            *res.at(0) == 1 || *res.at(0) == starknet::VALIDATED, 'INVALID_SIG_VERIFICATION_RESULT'
+            *res.at(0) == 1 || *res.at(0) == starknet::VALIDATED, 'INVALID_SIG_VERIFICATION_RESULT',
         );
     }
 

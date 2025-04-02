@@ -1,7 +1,7 @@
 use starknet::ContractAddress;
-use super::signer_management::SignerManagementComponent::{DeferredRemoveSignerRequest};
+use super::signer_management::SignerManagementComponent::DeferredRemoveSignerRequest;
 use super::signer_type::SignerType;
-use super::signers::{Secp256r1PubKey, StarkPubKey, MoaSigner};
+use super::signers::{MoaSigner, Secp256r1PubKey, StarkPubKey};
 
 #[derive(Drop, PartialEq, Serde)]
 struct GetSignersResponse {
@@ -33,16 +33,16 @@ trait ISignerManagement<TState> {
         ref self: TState,
         secp256r1_signer: Secp256r1PubKey,
         signer_type: SignerType,
-        multisig_threshold: usize
+        multisig_threshold: usize,
     );
     fn remove_secp256r1_signer(
-        ref self: TState, guid: felt252, signer_type: SignerType, multisig_threshold: usize
+        ref self: TState, guid: felt252, signer_type: SignerType, multisig_threshold: usize,
     );
     fn change_secp256r1_signer(
         ref self: TState,
         secp256r1_signer: Secp256r1PubKey,
         existing_guid: felt252,
-        signer_type: SignerType
+        signer_type: SignerType,
     );
     fn deferred_remove_signers(ref self: TState);
     fn cancel_deferred_remove_signers(ref self: TState);
@@ -53,16 +53,16 @@ trait ISignerManagement<TState> {
 
 #[starknet::interface]
 trait ISignerManagementInternal<TState> {
-    fn _add_stark_signer_unsafe(ref self: TState, stark_pub_key: StarkPubKey,);
+    fn _add_stark_signer_unsafe(ref self: TState, stark_pub_key: StarkPubKey);
 
     fn _add_secp256r1_signer_unsafe(
-        ref self: TState, secp256r1_signer: Secp256r1PubKey, signer_type: SignerType
+        ref self: TState, secp256r1_signer: Secp256r1PubKey, signer_type: SignerType,
     );
 
     fn _handle_deferred_request_when_signer_removal(ref self: TState, expired_etd: bool);
 
     fn _remove_secp256r1_signer_common_unsafe(
-        ref self: TState, expired_etd: bool, existing_guid: felt252, signer_type: SignerType
+        ref self: TState, expired_etd: bool, existing_guid: felt252, signer_type: SignerType,
     );
 
     fn _remove_all_secp256r1_signers_unsafe(ref self: TState, expired_etd: bool);
@@ -79,7 +79,7 @@ trait IMultisig<TState> {
 #[starknet::interface]
 trait IMultisigInternal<TState> {
     fn _set_multisig_threshold_inner(
-        ref self: TState, multisig_threshold: usize, num_signers: usize
+        ref self: TState, multisig_threshold: usize, num_signers: usize,
     );
 }
 
@@ -94,7 +94,7 @@ trait IMoaSignManagementExternal<TState> {
     fn is_signer(self: @TState, signer: MoaSigner) -> bool;
     fn get_signers_len(self: @TState) -> usize;
     fn add_external_signers(
-        ref self: TState, signers: Array<(ContractAddress, felt252)>, threshold: usize
+        ref self: TState, signers: Array<(ContractAddress, felt252)>, threshold: usize,
     );
     fn remove_external_signers(ref self: TState, signer_guids: Span<felt252>, threshold: usize);
 }

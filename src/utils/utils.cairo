@@ -1,13 +1,13 @@
 use array::{ArrayTrait, SpanTrait};
-use option::{OptionTrait};
-use serde::Serde;
-use traits::{Into, TryInto};
-use integer::{u512, u256_as_non_zero, u512_safe_div_rem_by_u256};
 use core::num::traits::WideMul;
+use integer::{u256_as_non_zero, u512, u512_safe_div_rem_by_u256};
+use option::OptionTrait;
+use serde::Serde;
 use starknet::SyscallResultTrait;
-use starknet::info::v2::{TxInfo, ResourceBounds};
-use starknet::syscalls::call_contract_syscall;
 use starknet::account::Call;
+use starknet::info::v2::{ResourceBounds, TxInfo};
+use starknet::syscalls::call_contract_syscall;
+use traits::{Into, TryInto};
 
 
 mod Consts {
@@ -31,13 +31,13 @@ impl SpanFelt252IntoU256 of IntoOrPanic<Span<felt252>, u256> {
             low: ((*self.at(4)).try_into().unwrap() * 0x1000000000000000000000000_u128
                 + (*self.at(5)).try_into().unwrap() * 0x10000000000000000_u128
                 + (*self.at(6)).try_into().unwrap() * 0x100000000_u128
-                + (*self.at(7)).try_into().unwrap())
+                + (*self.at(7)).try_into().unwrap()),
         }
     }
 }
 
 impl SpanFelt252IntoArray<
-    T, +TryInto<felt252, T>, +Drop<T>
+    T, +TryInto<felt252, T>, +Drop<T>,
 > of IntoOrPanic<Span<felt252>, Array<T>> {
     fn into_or_panic(self: Span<felt252>) -> Array<T> {
         let mut arr: Array<T> = array![];
@@ -49,7 +49,7 @@ impl SpanFelt252IntoArray<
 
             arr.append((*self.at(i)).try_into().unwrap());
             i += 1;
-        };
+        }
 
         arr
     }
@@ -75,7 +75,7 @@ fn base64_char_to_uint6(base64_char: u8) -> u8 {
 
 
 fn reconstruct_hash_from_challenge(
-    ref challenge_u32: Span<felt252>, offset: u32, challenge_len: u32, padding: u8
+    ref challenge_u32: Span<felt252>, offset: u32, challenge_len: u32, padding: u8,
 ) -> felt252 {
     assert(padding != 0, 'INVALID_FELT252_BASE64');
     let mut curr_u32: u32 = (*challenge_u32.pop_back().unwrap()).try_into().unwrap();
@@ -88,7 +88,7 @@ fn reconstruct_hash_from_challenge(
         }
         curr_shift *= 0x100;
         i += 1;
-    };
+    }
 
     let val: u8 = ((curr_u32 / curr_shift) & 0xFF).try_into().unwrap();
     let mut first_uint6 = base64_char_to_uint6(val) / padding;
@@ -123,7 +123,7 @@ fn mulDiv(a: u256, b: u256, c: u256) -> u256 {
 }
 
 fn concat_u32_with_padding(
-    first_span: Span<felt252>, ref second_span: Span<felt252>, padding: u32
+    first_span: Span<felt252>, ref second_span: Span<felt252>, padding: u32,
 ) -> (Array<felt252>, u32) {
     let mut concat_data: Array<felt252> = array![];
     let mut i = 0;
@@ -134,7 +134,7 @@ fn concat_u32_with_padding(
         }
         concat_data.append(*first_span.at(i));
         i += 1;
-    };
+    }
     let mut prev: u32 = (*first_span.at(first_len)).try_into().unwrap();
     assert(padding < 4, 'INVALID_PADDING');
     let (denom, mul, rem) = if (padding == 1) {
@@ -158,7 +158,7 @@ fn concat_u32_with_padding(
             },
             Option::None => { break; },
         };
-    };
+    }
     (concat_data, prev)
 }
 
@@ -193,23 +193,22 @@ fn extract_fee_from_tx(tx_info: @TxInfo, version: u256) -> u256 {
         let mut l1_gas_overall: u256 = 0;
         let mut l1_data_gas_overall: u256 = 0;
         let mut l2_gas_overall: u256 = 0;
-        for resource_bound in *tx_info
-            .resource_bounds {
-                if *resource_bound.resource == Consts::L1_GAS_RESOURCE {
-                    let max_amount: u256 = (*resource_bound.max_amount).into();
-                    let max_price_per_unit: u256 = (*resource_bound.max_price_per_unit).into();
-                    l1_gas_overall = max_amount * max_price_per_unit;
-                } else if *resource_bound.resource == Consts::L1_DATA_GAS_RESOURCE {
-                    let max_amount: u256 = (*resource_bound.max_amount).into();
-                    let max_price_per_unit: u256 = (*resource_bound.max_price_per_unit).into();
-                    l1_data_gas_overall = max_amount * max_price_per_unit;
-                } else if *resource_bound.resource == Consts::L2_GAS_RESOURCE {
-                    let max_amount: u256 = (*resource_bound.max_amount).into();
-                    let max_price_per_unit: u256 = (*resource_bound.max_price_per_unit).into();
-                    let tip: u256 = (*tx_info.tip).into();
-                    l2_gas_overall = max_amount * (max_price_per_unit + tip);
-                }
-            };
+        for resource_bound in *tx_info.resource_bounds {
+            if *resource_bound.resource == Consts::L1_GAS_RESOURCE {
+                let max_amount: u256 = (*resource_bound.max_amount).into();
+                let max_price_per_unit: u256 = (*resource_bound.max_price_per_unit).into();
+                l1_gas_overall = max_amount * max_price_per_unit;
+            } else if *resource_bound.resource == Consts::L1_DATA_GAS_RESOURCE {
+                let max_amount: u256 = (*resource_bound.max_amount).into();
+                let max_price_per_unit: u256 = (*resource_bound.max_price_per_unit).into();
+                l1_data_gas_overall = max_amount * max_price_per_unit;
+            } else if *resource_bound.resource == Consts::L2_GAS_RESOURCE {
+                let max_amount: u256 = (*resource_bound.max_amount).into();
+                let max_price_per_unit: u256 = (*resource_bound.max_price_per_unit).into();
+                let tip: u256 = (*tx_info.tip).into();
+                l2_gas_overall = max_amount * (max_price_per_unit + tip);
+            }
+        }
         return l1_gas_overall + l1_data_gas_overall + l2_gas_overall;
     } else {
         panic_with_felt252('INVALID_TX');
@@ -225,13 +224,13 @@ fn execute_calls(mut calls: Span<Call>) -> Array<Span<felt252>> {
                 let mut res = call_contract_syscall(
                     address: *call.to,
                     entry_point_selector: *call.selector,
-                    calldata: *call.calldata
+                    calldata: *call.calldata,
                 )
                     .unwrap_syscall();
                 result.append(res);
             },
             Option::None => { break; },
         };
-    };
+    }
     result
 }

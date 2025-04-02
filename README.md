@@ -1,9 +1,9 @@
-# Braavos Account Contract v1.1.0
+# Braavos Account Contract v1.2.0
 
 For the Braavos Multi Owner Account (MOA) please refer to [README_MOA.md](./README_MOA.md)
 
 #### Class Hashes
-*Braavos Account* - `0x02c8c7e6fbcfb3e8e15a46648e8914c6aa1fc506fc1e7fb3d1e19630716174bc`
+*Braavos Account* - `0x03957f9f5a1cbfe918cedc2015c85200ca51a5f7506ecb6de98a5207b759bf8a`
 
 *Braavos Base Account* - `0x03d16c7a9a60b0593bd202f660a28c5d76e0403601d9ccc7e4fa253b6a70c201`
 
@@ -112,7 +112,7 @@ This feature is intended to allow different protocols to submit transactions on 
 
 ### Build
 
-This repo is built using [Scarb v2.8.4](https://docs.swmansion.com/scarb/). After installation, run:
+This repo is built using [Scarb v2.11.2](https://docs.swmansion.com/scarb/). After installation, run:
 > scarb build
 
 ### Tests
@@ -120,7 +120,7 @@ This repo is built using [Scarb v2.8.4](https://docs.swmansion.com/scarb/). Afte
 Prerequisites:
 1. Install Python requirements
 > pip install -r requirements.txt
-2. Setup [starknet-devnet-rs](https://github.com/0xSpaceShard/starknet-devnet-rs)
+2. Setup [starknet-devnet-rs](https://github.com/0xSpaceShard/starknet-devnet-rs) ([version v0.3.0-rc.1](https://github.com/0xSpaceShard/starknet-devnet/releases/tag/v0.3.0-rc.1))
 3. Define `STARKNET_DEVNET` env variable to point to `starknet-devnet-rs` executable
 4. Define `STARKNET_PY_MARSHMALLOW_UNKNOWN_EXCLUDE` env variable to have the value `true`
 5. For RPC 0.8 test, define `STARKNET_DEVNET_0_8` env variable to point to `starknet-devnet-rs` 0.8 RPC executable 

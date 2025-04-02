@@ -105,20 +105,20 @@ async def test_is_valid_sig_wrong_inner_sig(prepare_simple_signer):
     signer: TestSigner = prepare_simple_signer
 
     ((sig_r, sig_s), (preamble_r, preamble_s)) = signer.sign_hash(TEST_HASH)
-    with pytest.raises(ClientError):
-        await signer.account.functions["is_valid_signature"].call(
-            TEST_HASH,
-            [
-                0,
-                signer.signers_info[0][0],
-                signer.signers_info[0][1],
-                sig_r,  # Preamble expected (sig(poseidon(hash, ext sig)))
-                sig_s,
-                2,
-                sig_r,
-                sig_s,
-            ],
-        )
+    res = await signer.account.functions["is_valid_signature"].call(
+        TEST_HASH,
+        [
+            0,
+            signer.signers_info[0][0],
+            signer.signers_info[0][1],
+            sig_r,  # Preamble expected (sig(poseidon(hash, ext sig)))
+            sig_s,
+            2,
+            sig_r,
+            sig_s,
+        ],
+    )
+    assert res[0] == utils_v2.INVALID, "Signature should be invalid"
 
 
 @pytest.mark.asyncio
@@ -126,20 +126,20 @@ async def test_is_valid_sig_wrong_external_sig(prepare_simple_signer):
     signer: TestSigner = prepare_simple_signer
 
     ((sig_r, sig_s), (preamble_r, preamble_s)) = signer.sign_hash(TEST_HASH)
-    with pytest.raises(ClientError):
-        await signer.account.functions["is_valid_signature"].call(
-            TEST_HASH,
-            [
-                0,
-                signer.signers_info[0][0],
-                signer.signers_info[0][1],
-                preamble_r,
-                preamble_s,
-                2,
-                sig_r + 1,
-                sig_s,
-            ],
-        )
+    res = await signer.account.functions["is_valid_signature"].call(
+        TEST_HASH,
+        [
+            0,
+            signer.signers_info[0][0],
+            signer.signers_info[0][1],
+            preamble_r,
+            preamble_s,
+            2,
+            sig_r + 1,
+            sig_s,
+        ],
+    )
+    assert res[0] == utils_v2.INVALID, "Signature should be invalid"
 
 
 @pytest.mark.asyncio
@@ -148,20 +148,20 @@ async def test_is_valid_sig_wrong_hash_stark_indexed(prepare_simple_signer):
 
     ((sig_r, sig_s), (preamble_r, preamble_s)) = signer.sign_hash(TEST_HASH)
     wrong_hash = TEST_HASH + 1
-    with pytest.raises(ClientError):
-        await signer.account.functions["is_valid_signature"].call(
-            wrong_hash,
-            [
-                0,
-                signer.signers_info[0][0],
-                signer.signers_info[0][1],
-                preamble_r,
-                preamble_s,
-                2,
-                sig_r,
-                sig_s,
-            ],
-        )
+    res = await signer.account.functions["is_valid_signature"].call(
+        wrong_hash,
+        [
+            0,
+            signer.signers_info[0][0],
+            signer.signers_info[0][1],
+            preamble_r,
+            preamble_s,
+            2,
+            sig_r,
+            sig_s,
+        ],
+    )
+    assert res[0] == utils_v2.INVALID, "Signature should be invalid"
 
 
 @pytest.mark.asyncio
@@ -201,21 +201,21 @@ async def test_is_valid_sig_2_sig_not_enough(prepare_signer):
 
     ((sig_r, sig_s), (preamble_r, preamble_s)) = signer.sign_hash(TEST_HASH)
 
-    with pytest.raises(ClientError,
-                       match=encode_string_as_hex('NOT_ENOUGH_CONFIRMATIONS')):
-        res = await signer.account.functions["is_valid_signature"].call(
-            TEST_HASH,
-            [
-                0,
-                signer.signers_info[0][0],
-                signer.signers_info[0][1],
-                preamble_r,
-                preamble_s,
-                2,
-                sig_r,
-                sig_s,
-            ],
-        )
+    res = await signer.account.functions["is_valid_signature"].call(
+        TEST_HASH,
+        [
+            0,
+            signer.signers_info[0][0],
+            signer.signers_info[0][1],
+            preamble_r,
+            preamble_s,
+            2,
+            sig_r,
+            sig_s,
+        ],
+    )
+    assert res[
+        0] == utils_v2.NOT_ENOUGH_CONFIRMATIONS, "Signature should be invalid"
 
 
 @pytest.mark.asyncio

@@ -5,10 +5,10 @@
 
 #[starknet::component]
 mod DailyTxnLimit {
-    use starknet::get_block_timestamp;
     use braavos_account::transactions::interface::{
-        DailyTxnLimitExternalTrait, DailyTxnLimitInternalTrait
+        DailyTxnLimitExternalTrait, DailyTxnLimitInternalTrait,
     };
+    use starknet::get_block_timestamp;
     use starknet::storage::Map;
 
     mod Consts {
@@ -30,7 +30,7 @@ mod DailyTxnLimit {
 
     #[embeddable_as(DailyTxnLimitInternalImpl)]
     impl DailyTxnLimitInternal<
-        TContractState, +HasComponent<TContractState>
+        TContractState, +HasComponent<TContractState>,
     > of DailyTxnLimitInternalTrait<ComponentState<TContractState>> {
         /// @param signer_guid Identifier of the signer for whom the number
         /// of daily transactions is checked and updated
@@ -40,7 +40,7 @@ mod DailyTxnLimit {
         /// Panic if the current number of transactions is equal to
         /// or greater than the daily limit
         fn _assert_and_update_daily_txn_limit(
-            ref self: ComponentState<TContractState>, signer_guid: felt252
+            ref self: ComponentState<TContractState>, signer_guid: felt252,
         ) {
             let days_since_epoch = get_block_timestamp() / 86400_u64;
             let curr = self._signer_daily_txn_count.read((signer_guid, days_since_epoch));
@@ -52,7 +52,7 @@ mod DailyTxnLimit {
 
     #[embeddable_as(DailyTxnLimitExternalImpl)]
     impl DailyTxnLimitExternal<
-        TContractState, +HasComponent<TContractState>
+        TContractState, +HasComponent<TContractState>,
     > of DailyTxnLimitExternalTrait<ComponentState<TContractState>> {
         /// @param signer_guid Identifier of the signer for whom the
         /// number of daily transactions is checked
@@ -61,7 +61,7 @@ mod DailyTxnLimit {
         /// @return count of transactions performed by signer with signer_id
         /// on the specified day
         fn get_tx_count(
-            self: @ComponentState<TContractState>, signer_guid: felt252, days_since_epoch: u64
+            self: @ComponentState<TContractState>, signer_guid: felt252, days_since_epoch: u64,
         ) -> usize {
             self._signer_daily_txn_count.read((signer_guid, days_since_epoch))
         }

@@ -1,6 +1,5 @@
 use starknet::account::Call;
-use starknet::ContractAddress;
-use starknet::TxInfo;
+use starknet::{ContractAddress, TxInfo};
 
 
 #[derive(Copy, Drop, Serde)]
@@ -108,7 +107,7 @@ trait ISessionManagement<TContractState> {
     fn revoke_session(ref self: TContractState, session_hash: felt252);
     fn is_session_revoked(self: @TContractState, session_hash: felt252) -> bool;
     fn get_spending_limit_amount_spent(
-        self: @TContractState, session_hash: felt252, token_address: ContractAddress
+        self: @TContractState, session_hash: felt252, token_address: ContractAddress,
     ) -> u256;
     fn is_session_validated(self: @TContractState, session_hash: felt252) -> bool;
     fn get_session_gas_spent(self: @TContractState, session_hash: felt252) -> u128;
@@ -124,7 +123,7 @@ trait ISessionHelper<TContractState> {
     );
 
     fn _validate_gas_spending(
-        ref self: TContractState, session_hash: felt252, fee: u128, request_gas_limit: u128
+        ref self: TContractState, session_hash: felt252, fee: u128, request_gas_limit: u128,
     );
     fn _cache_session(ref self: TContractState, session_hash: felt252);
     fn _get_signer_state_hash(self: @TContractState) -> felt252;
@@ -162,7 +161,7 @@ trait IGasSponsoredSessionExecute<TContractState> {
     fn execute_gas_sponsored_session_tx(
         ref self: TContractState,
         gas_sponsored_session_request: GasSponsoredSessionExecutionRequest,
-        signature: Span<felt252>
+        signature: Span<felt252>,
     ) -> Array<Span<felt252>>;
 
     fn execute_gas_sponsored_session_tx_v2(

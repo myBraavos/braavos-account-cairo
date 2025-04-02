@@ -1,11 +1,11 @@
 #[starknet::component]
 mod MultisigComponent {
-    use braavos_account::signers::signer_address_mgt::{
-        get_signers, get_signers_by_type, SignerType
-    };
-    use braavos_account::signers::interface;
-    use braavos_account::utils::asserts::assert_self_caller;
     use braavos_account::dwl::interface::IDwlInternal;
+    use braavos_account::signers::interface;
+    use braavos_account::signers::signer_address_mgt::{
+        SignerType, get_signers, get_signers_by_type,
+    };
+    use braavos_account::utils::asserts::assert_self_caller;
 
     mod Errors {
         const INVALID_MULTISIG_THRESH: felt252 = 'INVALID_MULTISIG_THRESHOLD';
@@ -33,13 +33,13 @@ mod MultisigComponent {
     > of interface::IMultisigInternal<ComponentState<TContractState>> {
         #[inline(always)]
         fn _set_multisig_threshold_inner(
-            ref self: ComponentState<TContractState>, multisig_threshold: usize, num_signers: usize
+            ref self: ComponentState<TContractState>, multisig_threshold: usize, num_signers: usize,
         ) {
             assert(
                 multisig_threshold == 0
                     || (num_signers >= 2
                         && (multisig_threshold >= 2 && multisig_threshold <= num_signers)),
-                Errors::INVALID_MULTISIG_THRESH
+                Errors::INVALID_MULTISIG_THRESH,
             );
             self.emit(MultisigSet { multisig_threshold: multisig_threshold });
             self.multisig_threshold.write(multisig_threshold);
@@ -59,7 +59,7 @@ mod MultisigComponent {
         /// removal of high withdrawal limit if exists. The inner function is responsible
         /// for other invariants
         fn set_multisig_threshold(
-            ref self: ComponentState<TContractState>, multisig_threshold: usize
+            ref self: ComponentState<TContractState>, multisig_threshold: usize,
         ) {
             assert_self_caller();
             let all_signers = get_signers();
@@ -88,7 +88,7 @@ mod MultisigComponent {
         /// Sets an adjusted threshold for the number of signatures required to
         /// validate a transaction
         fn set_multisig_threshold(
-            ref self: ComponentState<TContractState>, multisig_threshold: usize
+            ref self: ComponentState<TContractState>, multisig_threshold: usize,
         ) {
             assert_self_caller();
             let num_moa_signers = get_signers_by_type(SignerType::MOA).len();

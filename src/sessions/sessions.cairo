@@ -1,9 +1,9 @@
 #[starknet::component]
 mod SessionComponent {
-    use core::option::OptionTrait;
-    use core::traits::TryInto;
-    use core::dict::Felt252Dict;
-    use core::integer::U256Zeroable;
+    use braavos_account::account::interface::IBraavosAccountInternal;
+    use braavos_account::sessions::hash::{
+        calculate_gas_sponsored_session_execution_hash, calculate_session_execute_hash,
+    };
     use braavos_account::sessions::interface::{
         GasSponsoredSessionExecutionRequest, GasSponsoredSessionExecutionRequestV2,
         GasSponsoredSessionStarted, IGasSponsoredSessionExecute,
@@ -11,30 +11,30 @@ mod SessionComponent {
         ISessionHelper, ISessionManagement, SessionExecuteRequest, SessionExecuteRequestV2,
         SessionKeyVersion, SessionRevoked, SessionStarted, TokenAmount,
     };
-    use braavos_account::utils::asserts::{
-        assert_self_caller, assert_no_self_calls, assert_timestamp, assert_timestamp_2
-    };
-    use braavos_account::account::interface::IBraavosAccountInternal;
-    use braavos_account::sessions::hash::{
-        calculate_gas_sponsored_session_execution_hash, calculate_session_execute_hash
-    };
-    use braavos_account::utils::utils::{execute_calls, extract_fee_from_tx};
     use braavos_account::sessions::utils::{
         GasSponsoredSessionExecutionRequestIntoV2, SessionExecuteRequestIntoV2,
-        is_dai_transfer_from_itself_call, is_erc20_token_removal_call, validate_allowed_methods,
-        get_session_execute_version
+        get_session_execute_version, is_dai_transfer_from_itself_call, is_erc20_token_removal_call,
+        validate_allowed_methods,
     };
+    use braavos_account::signers::interface::IMultisig;
     use braavos_account::signers::signer_address_mgt::get_signers;
     use braavos_account::signers::signer_management::SIG_LEN_STARK;
-    use braavos_account::signers::interface::IMultisig;
-    use poseidon::poseidon_hash_span;
     use braavos_account::signers::signers::{StarkPubKey, StarkSignerMethods};
-    use starknet::{
-        ContractAddress, get_contract_address, get_caller_address, get_block_timestamp, get_tx_info,
-        TxInfo
+    use braavos_account::utils::asserts::{
+        assert_no_self_calls, assert_self_caller, assert_timestamp, assert_timestamp_2,
     };
+    use braavos_account::utils::utils::{execute_calls, extract_fee_from_tx};
+    use core::dict::Felt252Dict;
+    use core::integer::U256Zeroable;
+    use core::option::OptionTrait;
+    use core::traits::TryInto;
+    use poseidon::poseidon_hash_span;
     use starknet::account::Call;
     use starknet::storage::Map;
+    use starknet::{
+        ContractAddress, TxInfo, get_block_timestamp, get_caller_address, get_contract_address,
+        get_tx_info,
+    };
 
 
     #[storage]
@@ -42,7 +42,7 @@ mod SessionComponent {
         revocations: Map<felt252, bool>,
         validated_sessions: Map<(felt252, felt252), bool>,
         validated_sessions_strk_gas_spent: Map<felt252, u128>,
-        session_token_spent: Map<(felt252, ContractAddress), u256>
+        session_token_spent: Map<(felt252, ContractAddress), u256>,
     }
 
     mod Errors {
@@ -77,7 +77,7 @@ mod SessionComponent {
         }
 
         fn is_session_revoked(
-            self: @ComponentState<TContractState>, session_hash: felt252
+            self: @ComponentState<TContractState>, session_hash: felt252,
         ) -> bool {
             self.revocations.read(session_hash)
         }
@@ -85,7 +85,7 @@ mod SessionComponent {
         fn get_spending_limit_amount_spent(
             self: @ComponentState<TContractState>,
             session_hash: felt252,
-            token_address: ContractAddress
+            token_address: ContractAddress,
         ) -> u256 {
             self.session_token_spent.read((session_hash, token_address))
         }
@@ -97,7 +97,7 @@ mod SessionComponent {
         }
 
         fn is_session_validated(
-            self: @ComponentState<TContractState>, session_hash: felt252
+            self: @ComponentState<TContractState>, session_hash: felt252,
         ) -> bool {
             self.validated_sessions.read((session_hash, self._get_signer_state_hash()))
         }
@@ -173,17 +173,17 @@ mod SessionComponent {
             assert_timestamp_2(
                 session_execute_request.session_request.execute_after,
                 session_execute_request.session_request.execute_before,
-                timestamp
+                timestamp,
             );
             validate_allowed_methods(
                 session_execute_request.session_request.allowed_method_guids,
                 session_execute_request.session_request.allowed_method_calldata_validations,
                 executing_calls,
                 session_execute_request.call_hints,
-                session_key_version
+                session_key_version,
             );
             let session_hash = calculate_session_execute_hash(
-                @session_execute_request.session_request, session_key_version
+                @session_execute_request.session_request, session_key_version,
             );
 
             assert(!self.is_session_revoked(session_hash), Errors::SESSION_REVOKED);
@@ -197,19 +197,19 @@ mod SessionComponent {
                             session_hash,
                             session_execute_request.session_request_signature,
                             timestamp,
-                            tx_ver
+                            tx_ver,
                         ) == starknet::VALIDATED,
-                Errors::INVALID_SIG
+                Errors::INVALID_SIG,
             );
 
             let session_stark_owner = StarkPubKey {
-                pub_key: session_execute_request.session_request.owner_pub_key
+                pub_key: session_execute_request.session_request.owner_pub_key,
             };
 
             assert(
                 session_stark_owner.validate_signature(hash, signature)
                     && signature.len() == SIG_LEN_STARK,
-                Errors::INVALID_SIG
+                Errors::INVALID_SIG,
             );
 
             if (!is_execute_session_validated) {
@@ -223,14 +223,14 @@ mod SessionComponent {
                             execute_before: session_execute_request.session_request.execute_before,
                             tx_hash: hash,
                             v3_gas_limit: session_execute_request.session_request.v3_gas_limit,
-                        }
+                        },
                     );
             }
 
             let fee: u128 = extract_fee_from_tx(@tx_info, tx_ver.into()).try_into().unwrap();
             self
                 ._validate_gas_spending(
-                    session_hash, fee, session_execute_request.session_request.v3_gas_limit
+                    session_hash, fee, session_execute_request.session_request.v3_gas_limit,
                 );
 
             self
@@ -280,13 +280,13 @@ mod SessionComponent {
                         spending_tracker
                             .insert(
                                 (*spending_limit.token_address).into(),
-                                NullableTrait::new((curr_token_spent, *spending_limit.amount))
+                                NullableTrait::new((curr_token_spent, *spending_limit.amount)),
                             );
                         budget_addresses.append(*spending_limit.token_address);
                     },
                     Option::None(_) => { break; },
                 };
-            };
+            }
 
             loop {
                 match calls.pop_front() {
@@ -297,12 +297,12 @@ mod SessionComponent {
                             let erc20_amount = if is_erc20_token_removal_call(call) {
                                 u256 {
                                     low: (*(calldata).at(1)).try_into().unwrap(),
-                                    high: (*(calldata).at(2)).try_into().unwrap()
+                                    high: (*(calldata).at(2)).try_into().unwrap(),
                                 }
                             } else if is_dai_transfer_from_itself_call(call) {
                                 u256 {
                                     low: (*(calldata).at(2)).try_into().unwrap(),
-                                    high: (*(calldata).at(3)).try_into().unwrap()
+                                    high: (*(calldata).at(3)).try_into().unwrap(),
                                 }
                             } else {
                                 U256Zeroable::zero()
@@ -311,21 +311,21 @@ mod SessionComponent {
                                 let (spent_amount, spending_limit) = token_spending_tracker.deref();
                                 assert(
                                     erc20_amount + spent_amount <= spending_limit,
-                                    Errors::BAD_SPENDING
+                                    Errors::BAD_SPENDING,
                                 );
                                 spending_tracker
                                     .insert(
                                         (*call.to).into(),
                                         NullableTrait::new(
-                                            (erc20_amount + spent_amount, spending_limit)
-                                        )
+                                            (erc20_amount + spent_amount, spending_limit),
+                                        ),
                                     );
                             }
                         }
                     },
                     Option::None(_) => { break; },
                 };
-            };
+            }
 
             loop {
                 match budget_addresses.pop_front() {
@@ -345,7 +345,7 @@ mod SessionComponent {
             ref self: ComponentState<TContractState>,
             session_hash: felt252,
             fee: u128,
-            request_gas_limit: u128
+            request_gas_limit: u128,
         ) {
             let gas_spent = self.validated_sessions_strk_gas_spent.read(session_hash) + fee;
 
@@ -395,19 +395,19 @@ mod SessionComponent {
             assert_no_self_calls(gas_sponsored_session_request.calls);
             let timestamp = assert_timestamp(
                 gas_sponsored_session_request.execute_after,
-                gas_sponsored_session_request.execute_before
+                gas_sponsored_session_request.execute_before,
             );
             validate_allowed_methods(
                 gas_sponsored_session_request.allowed_method_guids,
                 gas_sponsored_session_request.allowed_method_calldata_validations,
                 gas_sponsored_session_request.calls,
                 gas_sponsored_session_request.call_hints,
-                session_key_version
+                session_key_version,
             );
 
             let caller = get_caller_address();
             let session_hash = calculate_gas_sponsored_session_execution_hash(
-                @gas_sponsored_session_request, caller, session_key_version
+                @gas_sponsored_session_request, caller, session_key_version,
             );
             let tx_info = get_tx_info().unbox();
             let tx_ver = tx_info.version;
@@ -420,9 +420,9 @@ mod SessionComponent {
                     || self
                         .get_contract()
                         ._is_valid_signature_common(
-                            session_hash, signature, timestamp, tx_ver
+                            session_hash, signature, timestamp, tx_ver,
                         ) == starknet::VALIDATED,
-                Errors::INVALID_SIG
+                Errors::INVALID_SIG,
             );
 
             if (!is_session_validated) {
@@ -434,8 +434,8 @@ mod SessionComponent {
                             caller: caller,
                             execute_after: gas_sponsored_session_request.execute_after,
                             execute_before: gas_sponsored_session_request.execute_before,
-                            tx_hash: tx_info.transaction_hash
-                        }
+                            tx_hash: tx_info.transaction_hash,
+                        },
                     );
             }
 

@@ -13,7 +13,7 @@ struct OutsideExecution {
     nonce: felt252,
     execute_after: u64,
     execute_before: u64,
-    calls: Span<Call>
+    calls: Span<Call>,
 }
 
 #[starknet::interface]
@@ -25,7 +25,7 @@ trait IOutsideExecution_V2<TContractState> {
     /// @notice This method allows reentrancy. A call to `__execute__` or `execute_from_outside` can
     /// trigger another nested transaction to `execute_from_outside`.
     fn execute_from_outside_v2(
-        ref self: TContractState, outside_execution: OutsideExecution, signature: Span<felt252>
+        ref self: TContractState, outside_execution: OutsideExecution, signature: Span<felt252>,
     ) -> Array<Span<felt252>>;
 
     /// Get the status of a given nonce, true if the nonce is available to use

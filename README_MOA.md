@@ -1,8 +1,8 @@
-# Braavos Multi Owner Account Contract v1.0.0
+# Braavos Multi Owner Account Contract v1.1.0
 
 #### Class Hash
 
-`0x041bf1e71792aecb9df3e9d04e1540091c5e13122a731e02bec588f71dc1a5c3`
+`0x003a4c71a7e8aa5eec24c87a54a9063dad4b336a14e082a3cf77c13710342e94`
 
 ## Architecture
 
@@ -98,7 +98,7 @@ Several limitations are imposed on pending transactions:
 
 ### Build
 
-This repo is built using [Scarb v2.5.1](https://docs.swmansion.com/scarb/). After installation, run:
+This repo is built using [Scarb v2.11.2](https://docs.swmansion.com/scarb/). After installation, run:
 > scarb build
 
 ### Tests

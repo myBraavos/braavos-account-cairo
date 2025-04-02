@@ -1,19 +1,18 @@
 #[starknet::component]
 mod DwlComponent {
+    use braavos_account::account::interface::RequiredSigner;
+    use braavos_account::dwl::interface::{
+        BypassCallType, BypassRange, IDwlExternal, IDwlInternal, IRateServiceInternal,
+        MainnetConfig, PreExecuteBypassState, WhitelistCallType,
+    };
+    use braavos_account::signers::interface::{IMultisig, ISignerManagement};
+    use braavos_account::signers::signer_address_mgt::any_strong_signer;
+    use braavos_account::utils::asserts::assert_self_caller;
     use core::array::SpanTrait;
     use starknet::account::Call;
-    use braavos_account::dwl::interface::{
-        IDwlInternal, IDwlExternal, BypassCallType, BypassRange, IRateServiceInternal,
-        PreExecuteBypassState, WhitelistCallType, MainnetConfig
-    };
-    use braavos_account::account::interface::RequiredSigner;
-    use braavos_account::signers::interface::{IMultisig, ISignerManagement};
-    use braavos_account::signers::signer_address_mgt::{any_strong_signer};
-    use braavos_account::utils::asserts::assert_self_caller;
-    use starknet::syscalls::get_execution_info_v2_syscall;
-    use starknet::get_tx_info;
-    use starknet::{SyscallResultTrait, ContractAddress,};
     use starknet::storage::Map;
+    use starknet::syscalls::get_execution_info_v2_syscall;
+    use starknet::{ContractAddress, SyscallResultTrait, get_tx_info};
 
     #[derive(Drop, starknet::Event)]
     struct WithdrawalLimitLowSet {
@@ -70,12 +69,12 @@ mod DwlComponent {
             withdrawal_limit_low: u128,
             withdrawal_limit_high: u128,
             daily_spend: u128,
-            strongest_signer: RequiredSigner
+            strongest_signer: RequiredSigner,
         ) -> RequiredSigner {
             if Self::is_in_low_range(withdrawal_limit_low, daily_spend) {
                 return RequiredSigner::Stark;
             } else if Self::is_in_mid_range(
-                withdrawal_limit_low, withdrawal_limit_high, daily_spend
+                withdrawal_limit_low, withdrawal_limit_high, daily_spend,
             ) {
                 return RequiredSigner::Strong;
             }
@@ -94,7 +93,7 @@ mod DwlComponent {
         /// High limit must exist.
         #[inline(always)]
         fn is_in_mid_range(
-            withdrawal_limit_low: u128, withdrawal_limit_high: u128, daily_spend: u128
+            withdrawal_limit_low: u128, withdrawal_limit_high: u128, daily_spend: u128,
         ) -> bool {
             if withdrawal_limit_high == 0 {
                 return false;
@@ -144,17 +143,17 @@ mod DwlComponent {
         ) {
             assert(
                 withdrawal_limit_high == 0 || any_strong_signer,
-                Errors::INVALID_HIGH_WITHDRAWAL_LIMIT
+                Errors::INVALID_HIGH_WITHDRAWAL_LIMIT,
             );
             assert(
-                withdrawal_limit_high == 0 || is_multisig, Errors::INVALID_HIGH_WITHDRAWAL_LIMIT
+                withdrawal_limit_high == 0 || is_multisig, Errors::INVALID_HIGH_WITHDRAWAL_LIMIT,
             );
             if withdrawal_limit_high != 0 {
                 let withdrawal_limit_low: u128 = self.withdrawal_limit_low.read();
                 assert(
                     withdrawal_limit_low == 0
                         || withdrawal_limit_low < withdrawal_limit_high.into(),
-                    Errors::INVALID_HIGH_WITHDRAWAL_LIMIT
+                    Errors::INVALID_HIGH_WITHDRAWAL_LIMIT,
                 );
                 self._ensure_fee_rate_exists(fee_rate, stark_fee_rate);
             }
@@ -173,14 +172,15 @@ mod DwlComponent {
             any_strong_signer: bool,
         ) {
             assert(
-                withdrawal_limit_low == 0 || any_strong_signer, Errors::INVALID_WITHDRAWAL_LIMIT_LOW
+                withdrawal_limit_low == 0 || any_strong_signer,
+                Errors::INVALID_WITHDRAWAL_LIMIT_LOW,
             );
             if withdrawal_limit_low != 0 {
                 let withdrawal_limit_high: u128 = self.withdrawal_limit_high.read();
                 assert(
                     withdrawal_limit_high == 0
                         || withdrawal_limit_high > withdrawal_limit_low.into(),
-                    Errors::INVALID_WITHDRAWAL_LIMIT_LOW
+                    Errors::INVALID_WITHDRAWAL_LIMIT_LOW,
                 );
                 self._ensure_fee_rate_exists(fee_rate, stark_fee_rate);
             }
@@ -229,7 +229,7 @@ mod DwlComponent {
         /// Updates the stored fee rates based on the given input.
         #[inline(always)]
         fn _ensure_fee_rate_exists(
-            ref self: ComponentState<TContractState>, fee_rate: u128, stark_fee_rate: u128
+            ref self: ComponentState<TContractState>, fee_rate: u128, stark_fee_rate: u128,
         ) {
             let existing_fee_rate: u128 = self.get_contract()._get_stored_eth_fee_rate();
             let existing_stark_fee_rate: u128 = self.get_contract()._get_stored_stark_fee_rate();
@@ -276,10 +276,10 @@ mod DwlComponent {
             let updated_spending = daily_spending + fee_value;
 
             let is_mid_bypass_transfer = DwlUtilImpl::is_in_mid_range(
-                withdrawal_limit_low, withdrawal_limit_high, updated_spending
+                withdrawal_limit_low, withdrawal_limit_high, updated_spending,
             );
             let is_low_bypass_transfer = DwlUtilImpl::is_in_low_range(
-                withdrawal_limit_low, updated_spending
+                withdrawal_limit_low, updated_spending,
             );
 
             // we update the fee in case this tx reverts during __execute__
@@ -307,7 +307,7 @@ mod DwlComponent {
                 return PreExecuteBypassState {
                     balances: array![].span(),
                     bypass_call_type: BypassCallType::NoDwl,
-                    range_on_validate: BypassRange::HighRange
+                    range_on_validate: BypassRange::HighRange,
                 };
             }
 
@@ -315,7 +315,7 @@ mod DwlComponent {
                 return PreExecuteBypassState {
                     balances: array![].span(),
                     bypass_call_type: BypassCallType::NoDwl,
-                    range_on_validate: BypassRange::HighRange
+                    range_on_validate: BypassRange::HighRange,
                 };
             }
 
@@ -326,11 +326,11 @@ mod DwlComponent {
             let daily_spending: u128 = self.daily_spending.read(daily_spending_key);
 
             let range_on_validate = if DwlUtilImpl::is_in_low_range(
-                withdrawal_limit_low, daily_spending
+                withdrawal_limit_low, daily_spending,
             ) {
                 BypassRange::LowerRange
             } else if DwlUtilImpl::is_in_mid_range(
-                withdrawal_limit_low, withdrawal_limit_high, daily_spending
+                withdrawal_limit_low, withdrawal_limit_high, daily_spending,
             ) {
                 BypassRange::MidRange
             } else {
@@ -339,7 +339,7 @@ mod DwlComponent {
             return PreExecuteBypassState {
                 balances: balances,
                 bypass_call_type: BypassCallType::ValidBypassCall,
-                range_on_validate: range_on_validate
+                range_on_validate: range_on_validate,
             };
         }
 
@@ -383,11 +383,11 @@ mod DwlComponent {
             let withdrawal_limit_low = self.withdrawal_limit_low.read();
             let withdrawal_limit_high = self.withdrawal_limit_high.read();
             let range = if DwlUtilImpl::is_in_low_range(
-                withdrawal_limit_low, daily_spend_with_updated_fee
+                withdrawal_limit_low, daily_spend_with_updated_fee,
             ) {
                 BypassRange::LowerRange
             } else if DwlUtilImpl::is_in_mid_range(
-                withdrawal_limit_low, withdrawal_limit_high, daily_spend_with_updated_fee
+                withdrawal_limit_low, withdrawal_limit_high, daily_spend_with_updated_fee,
             ) {
                 BypassRange::MidRange
             } else {
@@ -416,7 +416,7 @@ mod DwlComponent {
             }
             let (range, daily_spend_with_updated_fee, stored_spending, old_fee_rate) = self
                 ._calc_and_update_daily_spending_post_execute(
-                    pre_execute_bypass_state, block_timestamp, fee, version
+                    pre_execute_bypass_state, block_timestamp, fee, version,
                 );
             let daily_spending_key = DwlUtilImpl::get_daily_spending_key(block_timestamp);
             // if were under limit low then an eligible bypass signer is either a stark signer
@@ -452,7 +452,7 @@ mod DwlComponent {
                 .write(
                     daily_spending_key,
                     stored_spending
-                        - self.get_contract()._calc_fee_value_with_rate(old_fee_rate, fee)
+                        - self.get_contract()._calc_fee_value_with_rate(old_fee_rate, fee),
                 );
 
             return BypassCallType::NotBypassCall;
@@ -491,7 +491,7 @@ mod DwlComponent {
                     *first_call.selector,
                     *first_call.to,
                     *first_call.calldata,
-                    Consts::APPROVE_CALL_SELECTOR
+                    Consts::APPROVE_CALL_SELECTOR,
                 );
             let approve_to = (*first_call.calldata).at(0);
             // we validate that the first call is a valid approval
@@ -527,7 +527,7 @@ mod DwlComponent {
                     *first_call.selector,
                     *first_call.to,
                     *first_call.calldata,
-                    Consts::APPROVE_CALL_SELECTOR
+                    Consts::APPROVE_CALL_SELECTOR,
                 );
             let first_approve_to = (*first_call.calldata).at(0);
             // we validate that the first call is a valid approval
@@ -538,7 +538,7 @@ mod DwlComponent {
                         *second_call.selector,
                         *second_call.to,
                         *second_call.calldata,
-                        Consts::APPROVE_CALL_SELECTOR
+                        Consts::APPROVE_CALL_SELECTOR,
                     );
                 let second_approve_to = (*second_call.calldata).at(0);
                 // we validate that the second call is also a valid approval
@@ -564,7 +564,7 @@ mod DwlComponent {
         /// A call span with length 3 must have two consecutive approves in the first two calls
         /// and then a whitelisted call in the the third call
         fn _validate_call_structure(
-            self: @ComponentState<TContractState>, calls: Span<Call>
+            self: @ComponentState<TContractState>, calls: Span<Call>,
         ) -> bool {
             let tx_info = get_tx_info().unbox();
             // DWL calls are not allowed in a paymaster mode
@@ -578,12 +578,15 @@ mod DwlComponent {
                     let call = calls.at(0);
                     return self
                         ._validate_single_call_structure(
-                            *call.selector, *call.to, *call.calldata, Consts::TRANSFER_CALL_SELECTOR
+                            *call.selector,
+                            *call.to,
+                            *call.calldata,
+                            Consts::TRANSFER_CALL_SELECTOR,
                         );
                 },
                 2 => { return self._validate_couplet_call_structure(calls); },
                 3 => { return self._validate_triplet_call_structure(calls); },
-                _ => { return false; }
+                _ => { return false; },
             }
         }
     }
@@ -606,7 +609,7 @@ mod DwlComponent {
             let stark_fee_rate = self.get_contract()._get_stark_fee_rate();
             self
                 ._set_withdrawal_limit_low_inner(
-                    withdrawal_limit_low, fee_rate, stark_fee_rate, any_strong_signer()
+                    withdrawal_limit_low, fee_rate, stark_fee_rate, any_strong_signer(),
                 );
         }
 
@@ -623,7 +626,7 @@ mod DwlComponent {
                     fee_rate,
                     stark_fee_rate,
                     any_strong_signer(),
-                    self.get_contract().get_multisig_threshold() >= 2
+                    self.get_contract().get_multisig_threshold() >= 2,
                 );
         }
 

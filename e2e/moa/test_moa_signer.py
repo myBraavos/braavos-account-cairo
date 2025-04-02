@@ -29,7 +29,6 @@ import pytest
 import random
 
 from starknet_py.net.account.account import Account, KeyPair
-from starknet_py.net.http_client import ClientError
 
 
 @pytest.mark.asyncio
@@ -92,11 +91,9 @@ async def test_moa_signer_valid(
 
     # check that 1 sig is not enough
     ((sig_r, sig_s), (preamble_r, preamble_s)) = signer.sign_hash(TEST_HASH)
-    with pytest.raises(ClientError,
-                       match=encode_string_as_hex('NOT_ENOUGH_CONFIRMATIONS')):
-        res = await signer.account.functions["is_valid_signature"].call(
-            TEST_HASH,
-            [
+    res = await signer.account.functions["is_valid_signature"].call(
+        TEST_HASH,
+        [
                 0,
                 signer.signers_info[0][0],
                 signer.signers_info[0][1],
@@ -105,8 +102,9 @@ async def test_moa_signer_valid(
                 2,
                 sig_r,
                 sig_s,
-            ],
-        )
+        ],
+    )
+    assert res[0] == utils_v2.NOT_ENOUGH_CONFIRMATIONS, "Signature should be invalid"
 
     # check that braavos account signature validated
     txn = utils_v2.txn_stub(TEST_HASH)

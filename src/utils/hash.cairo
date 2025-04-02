@@ -1,10 +1,10 @@
 use core::iter::IntoIterator;
 use core::sha256::{
-    compute_sha256_u32_array, sha256_state_handle_init, sha256_state_handle_digest,
-    SHA256_INITIAL_STATE, append_zeros
+    SHA256_INITIAL_STATE, append_zeros, compute_sha256_u32_array, sha256_state_handle_digest,
+    sha256_state_handle_init,
 };
-use starknet::syscalls::sha256_process_block_syscall;
 use starknet::SyscallResultTrait;
+use starknet::syscalls::sha256_process_block_syscall;
 
 /// This function is based on the cairo core lib sha256 function compute_sha256_u32_array
 /// but has a modified `add_sha256_padded_input` to match our input format.
@@ -15,7 +15,7 @@ fn sha256_u32(mut data: Array<u32>, last_word: u32, padding: u32) -> Span<felt25
     let mut input = data.span();
     while let Option::Some(chunk) = input.multi_pop_front() {
         state = sha256_process_block_syscall(state, *chunk).unwrap_syscall();
-    };
+    }
     let [res1, res2, res3, res4, res5, res6, res7, res8] = sha256_state_handle_digest(state)
         .unbox();
     array![
@@ -26,7 +26,7 @@ fn sha256_u32(mut data: Array<u32>, last_word: u32, padding: u32) -> Span<felt25
         res5.into(),
         res6.into(),
         res7.into(),
-        res8.into()
+        res8.into(),
     ]
         .span()
 }

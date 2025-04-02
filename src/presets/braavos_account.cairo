@@ -8,38 +8,38 @@ const ACCOUNT_VERSION: felt252 = '001.002.000';
 mod BraavosAccount {
     use array::{ArrayTrait, SpanTrait};
     use box::BoxTrait;
-    use option::{Option, OptionTrait};
-    use serde::Serde;
-    use starknet::info::v2::ExecutionInfo;
-    use starknet::{
-        ClassHash, get_caller_address, get_contract_address, get_tx_info, SyscallResultTrait, TxInfo
-    };
-    use starknet::syscalls::get_execution_info_v2_syscall;
-    use starknet::account::Call;
-    use traits::{Into, TryInto};
-
     use braavos_account::account::interface;
     use braavos_account::dwl::dwl::DwlComponent;
     use braavos_account::dwl::interface::{BypassCallType, BypassRange};
     use braavos_account::introspection::src5::SRC5Component;
+    use braavos_account::outside_execution::outside_execution::OutsideExecComponent;
+    use braavos_account::sessions::sessions::SessionComponent;
+    use braavos_account::sessions::utils::is_session_execute;
+    use braavos_account::signers::multisig::MultisigComponent;
+    use braavos_account::signers::signer_address_mgt::{any, any_strong_signer, get_first_signer};
+    use braavos_account::signers::signer_management::{
+        PUBLIC_KEY_LEN_SECP256R1, RS_LEN_SECP256R1, SIG_LEN_STARK, SignerManagementComponent,
+    };
+    use braavos_account::signers::signer_type::{
+        EMPTY_SIGNER_TYPE, SECP256R1_SIGNER_TYPE, STARK_SIGNER_TYPE, SignerType,
+        WEBAUTHN_SIGNER_TYPE,
+    };
     use braavos_account::signers::signers::{
         Secp256r1PubKey, Secp256r1SignerMethodsTrait, StarkPubKey, StarkSignerMethodsTrait,
     };
-    use braavos_account::signers::multisig::MultisigComponent;
-    use braavos_account::signers::signer_management::{
-        SignerManagementComponent, SIG_LEN_STARK, PUBLIC_KEY_LEN_SECP256R1, RS_LEN_SECP256R1
-    };
-    use braavos_account::signers::signer_type::{
-        SignerType, EMPTY_SIGNER_TYPE, SECP256R1_SIGNER_TYPE, STARK_SIGNER_TYPE,
-        WEBAUTHN_SIGNER_TYPE
-    };
-    use braavos_account::signers::signer_address_mgt::{get_first_signer, any, any_strong_signer};
     use braavos_account::upgradable::upgradable::UpgradableComponent;
     use braavos_account::utils::asserts::assert_self_caller;
     use braavos_account::utils::utils::{execute_calls, extract_fee_from_tx};
-    use braavos_account::outside_execution::outside_execution::OutsideExecComponent;
-    use braavos_account::sessions::utils::is_session_execute;
-    use braavos_account::sessions::sessions::SessionComponent;
+    use option::{Option, OptionTrait};
+    use serde::Serde;
+    use starknet::account::Call;
+    use starknet::info::v2::ExecutionInfo;
+    use starknet::syscalls::get_execution_info_v2_syscall;
+    use starknet::{
+        ClassHash, SyscallResultTrait, TxInfo, get_caller_address, get_contract_address,
+        get_tx_info,
+    };
+    use traits::{Into, TryInto};
 
     mod Errors {
         const ALREADY_INITIALIZED: felt252 = 'ALREADY_INITIALIZED';
@@ -66,7 +66,6 @@ mod BraavosAccount {
     #[abi(embed_v0)]
     impl DwlExternalImpl = DwlComponent::DwlExternalImpl<ContractState>;
     impl DwlInternalImpl = DwlComponent::DwlInternalImpl<ContractState>;
-
     use braavos_account::dwl::rate_service::RateComponent;
     component!(path: RateComponent, storage: rate, event: RateEvent);
     #[abi(embed_v0)]
@@ -192,7 +191,7 @@ mod BraavosAccount {
         #[flat]
         OutsideExecEvt: OutsideExecComponent::Event,
         #[flat]
-        SessionsEvt: SessionComponent::Event
+        SessionsEvt: SessionComponent::Event,
     }
 
     #[constructor]
@@ -228,12 +227,15 @@ mod BraavosAccount {
                 num: 1_u8,
                 stark_validated: true,
                 secp256r1_validated: false,
-                webauthn_validated: false
+                webauthn_validated: false,
             };
         }
 
         let mut result = ProcessedSignature {
-            num: 0_u8, stark_validated: false, secp256r1_validated: false, webauthn_validated: false
+            num: 0_u8,
+            stark_validated: false,
+            secp256r1_validated: false,
+            webauthn_validated: false,
         };
         let mut duplicate_tracker: Felt252Dict<u8> = Default::default();
         let mut current_guid = 0;
@@ -252,7 +254,7 @@ mod BraavosAccount {
                     assert(
                         stark_signer
                             .validate_signature(hash, signature.slice(offset, SIG_LEN_STARK)),
-                        Errors::INVALID_SIG
+                        Errors::INVALID_SIG,
                     );
                 }
 
@@ -265,7 +267,7 @@ mod BraavosAccount {
                     let mut secp256r1_public_key = signature
                         .slice(offset, PUBLIC_KEY_LEN_SECP256R1);
                     let secp256r1_signer = Serde::<
-                        Secp256r1PubKey
+                        Secp256r1PubKey,
                     >::deserialize(ref secp256r1_public_key)
                         .expect(Errors::INVALID_SIGNER);
                     current_guid = secp256r1_signer
@@ -275,7 +277,7 @@ mod BraavosAccount {
                         .slice(offset + PUBLIC_KEY_LEN_SECP256R1, RS_LEN_SECP256R1);
                     assert(
                         secp256r1_signer.validate_signature(hash, secp256r1_signature),
-                        Errors::INVALID_SIG
+                        Errors::INVALID_SIG,
                     );
                 }
 
@@ -298,7 +300,7 @@ mod BraavosAccount {
                     let mut secp256r1_public_key = signature
                         .slice(offset, PUBLIC_KEY_LEN_SECP256R1);
                     let secp256r1_signer = Serde::<
-                        Secp256r1PubKey
+                        Secp256r1PubKey,
                     >::deserialize(ref secp256r1_public_key)
                         .expect(Errors::INVALID_SIGNER);
                     current_guid = secp256r1_signer
@@ -308,7 +310,7 @@ mod BraavosAccount {
                         .slice(offset + PUBLIC_KEY_LEN_SECP256R1, sig_len);
                     assert(
                         secp256r1_signer.validate_webauthn_signature(hash, secp256r1_signature),
-                        Errors::INVALID_SIG
+                        Errors::INVALID_SIG,
                     );
                 }
 
@@ -318,13 +320,13 @@ mod BraavosAccount {
                 offset = offset + PUBLIC_KEY_LEN_SECP256R1 + sig_len;
             } else {
                 panic_with_felt252(Errors::INVALID_SIGNER);
-            };
+            }
 
             if verify_signature {
                 assert(duplicate_tracker.get(current_guid) == 0, Errors::INVALID_SIG);
                 duplicate_tracker.insert(current_guid, 1);
             };
-        };
+        }
         return result;
     }
 
@@ -338,7 +340,7 @@ mod BraavosAccount {
         self: @ContractState,
         processed_sig: ProcessedSignature,
         is_etd_selector: bool,
-        block_timestamp: u64
+        block_timestamp: u64,
     ) -> felt252 {
         let defered_remove_signer_req = self.signers.deferred_remove_signer_req.read();
         let is_secp256r1_present = any(SignerType::Secp256r1);
@@ -349,14 +351,14 @@ mod BraavosAccount {
         // would happen if the request was removed
         let is_strong_signer_expected = (is_secp256r1_present || is_webauthn_present)
             && !SignerManagementComponent::_is_deferred_req_expired(
-                defered_remove_signer_req, block_timestamp
+                defered_remove_signer_req, block_timestamp,
             );
         if (is_strong_signer_expected) {
             if is_etd_selector {
                 assert(
                     processed_sig.stark_validated == true
                         && processed_sig.is_any_strong_signature_validated() == false,
-                    Errors::INVALID_SIG
+                    Errors::INVALID_SIG,
                 );
                 // cover: fail if etd already pending
                 assert(defered_remove_signer_req.expire_at == 0, Errors::INVALID_ENTRYPOINT);
@@ -373,14 +375,14 @@ mod BraavosAccount {
                         processed_sig.num.into() >= multisig_thresh
                             && processed_sig.secp256r1_validated == true
                             && processed_sig.webauthn_validated == true,
-                        Errors::INVALID_SIG
+                        Errors::INVALID_SIG,
                     );
                 } else {
                     assert(
                         processed_sig.num.into() >= multisig_thresh
                             && processed_sig.stark_validated == true
                             && processed_sig.is_any_strong_signature_validated() == true,
-                        Errors::INVALID_SIG
+                        Errors::INVALID_SIG,
                     );
                 }
                 return starknet::VALIDATED;
@@ -389,7 +391,7 @@ mod BraavosAccount {
                     processed_sig.num == 1
                         && processed_sig.is_any_strong_signature_validated() == true
                         && processed_sig.stark_validated == false,
-                    Errors::INVALID_SIG
+                    Errors::INVALID_SIG,
                 );
                 return starknet::VALIDATED;
             }
@@ -398,7 +400,7 @@ mod BraavosAccount {
             processed_sig.num == 1
                 && processed_sig.stark_validated == true
                 && processed_sig.is_any_strong_signature_validated() == false,
-            Errors::INVALID_SIG
+            Errors::INVALID_SIG,
         );
         return starknet::VALIDATED;
     }
@@ -407,7 +409,7 @@ mod BraavosAccount {
     /// @param calls - list of calls, a legal deferred removal transaction contains a single call
     /// to the deferred removal selector.
     fn _assert_valid_etd_call(
-        calls: Span<Call>, fee: u256, version: u256, paymaster_data: Span<felt252>
+        calls: Span<Call>, fee: u256, version: u256, paymaster_data: Span<felt252>,
     ) -> bool {
         let call_0 = calls.at(0);
         let self_address = get_contract_address();
@@ -424,7 +426,7 @@ mod BraavosAccount {
             assert(
                 (version.low == 1 && fee <= Consts::MAX_ETD_FEE_V1)
                     || (version.low == 3 && fee <= Consts::MAX_ETD_FEE_V3),
-                Errors::INVALID_TX
+                Errors::INVALID_TX,
             );
         }
         return etd_selector;
@@ -436,7 +438,7 @@ mod BraavosAccount {
         ref self: ContractState,
         stark_pub_key: StarkPubKey,
         depl_params: interface::AdditionalDeploymentParams,
-        tx_info: TxInfo
+        tx_info: TxInfo,
     ) {
         assert(get_first_signer(SignerType::Stark) == 0, Errors::ALREADY_INITIALIZED);
         assert(stark_pub_key.pub_key.is_zero() == false, Errors::INVALID_SIGNER);
@@ -447,12 +449,12 @@ mod BraavosAccount {
             depl_params.signer_type == SignerType::Empty
                 || depl_params.signer_type == SignerType::Webauthn
                 || depl_params.signer_type == SignerType::Secp256r1,
-            Errors::INVALID_INITIALIZATION
+            Errors::INVALID_INITIALIZATION,
         );
         if (depl_params.signer_type != SignerType::Empty) {
             assert(
                 Secp256r1SignerMethodsTrait::assert_valid_point(@depl_params.secp256r1_signer),
-                Errors::INVALID_SIGNER
+                Errors::INVALID_SIGNER,
             );
 
             self
@@ -477,7 +479,7 @@ mod BraavosAccount {
                     depl_params.withdrawal_limit_low,
                     depl_params.fee_rate,
                     depl_params.stark_fee_rate,
-                    any_strong_signer()
+                    any_strong_signer(),
                 );
         }
     }
@@ -501,12 +503,12 @@ mod BraavosAccount {
             let tx_info = get_tx_info().unbox();
             let mut signature = tx_info.signature;
             let processed_depl_sig = Serde::<
-                ProcessedDeploymentSignature
+                ProcessedDeploymentSignature,
             >::deserialize(ref signature)
                 .expect(Errors::INVALID_INITIALIZATION);
 
             _initializer_common_safe(
-                ref self, stark_pub_key, processed_depl_sig.deployment_params, tx_info
+                ref self, stark_pub_key, processed_depl_sig.deployment_params, tx_info,
             );
         }
 
@@ -517,7 +519,7 @@ mod BraavosAccount {
         fn initializer_from_factory(
             ref self: ContractState,
             stark_pub_key: StarkPubKey,
-            deployment_params: interface::AdditionalDeploymentParams
+            deployment_params: interface::AdditionalDeploymentParams,
         ) {
             let tx_info = get_tx_info().unbox();
             _initializer_common_safe(ref self, stark_pub_key, deployment_params, tx_info);
@@ -549,7 +551,7 @@ mod BraavosAccount {
             // to verify that spending is correct.
             if dwl_status_pre_execute.bypass_call_type != BypassCallType::NoDwl {
                 let processed_sig = _validate_signature_common(
-                    @self, tx_info.transaction_hash, tx_info.signature, false
+                    @self, tx_info.transaction_hash, tx_info.signature, false,
                 );
                 let version = Into::<felt252, u256>::into(tx_info.version);
                 let fee = extract_fee_from_tx(@tx_info, version);
@@ -563,7 +565,7 @@ mod BraavosAccount {
                         processed_sig.num,
                         self.multisig.multisig_threshold.read(),
                         fee,
-                        version.low.into()
+                        version.low.into(),
                     );
 
                 // If the status post execute is not a bypass call, meaning we've passed
@@ -576,7 +578,7 @@ mod BraavosAccount {
                         @self,
                         processed_sig,
                         _assert_valid_etd_call(calls, fee, version, tx_info.paymaster_data),
-                        block_timestamp
+                        block_timestamp,
                     ) != starknet::VALIDATED {
                         panic_with_felt252(Errors::INVALID_SIG);
                     }
@@ -607,21 +609,21 @@ mod BraavosAccount {
             let version = Into::<felt252, u256>::into(tx_info.version);
             let is_query_txn_ver = version.high == 1;
             if is_session_execute(calls) {
-                self.sessions._validate_session_execute(tx_info, block_timestamp, calls,)
+                self.sessions._validate_session_execute(tx_info, block_timestamp, calls)
             } else {
                 let processed_sig = _validate_signature_common(
-                    @self, tx_hash, signature, !is_query_txn_ver
+                    @self, tx_hash, signature, !is_query_txn_ver,
                 );
                 // also asserts that the etd call is valid meaning we will REJECT in __validate__
                 let fee = extract_fee_from_tx(@tx_info, version);
                 let is_etd_selector = _assert_valid_etd_call(
-                    calls, fee, version, tx_info.paymaster_data
+                    calls, fee, version, tx_info.paymaster_data,
                 );
 
                 let bypass_range = self
                     .dwl
                     ._handle_bypass_calls_on_validate(
-                        block_timestamp, calls, fee, version.low.into()
+                        block_timestamp, calls, fee, version.low.into(),
                     );
                 // checking that at least some signature is verified otherwise anyone can start
                 // draining
@@ -634,13 +636,13 @@ mod BraavosAccount {
                 }
 
                 _validate_processed_signature(
-                    @self, processed_sig, is_etd_selector, block_timestamp
+                    @self, processed_sig, is_etd_selector, block_timestamp,
                 )
             }
         }
 
         fn is_valid_signature(
-            self: @ContractState, hash: felt252, signature: Span<felt252>
+            self: @ContractState, hash: felt252, signature: Span<felt252>,
         ) -> felt252 {
             let exec_info = get_execution_info_v2_syscall().unwrap_syscall().unbox();
             let block_timestamp = exec_info.block_info.unbox().block_timestamp;
@@ -675,14 +677,14 @@ mod BraavosAccount {
         /// @param fee_amount - estimated fee the transaction would have
         /// @param tx_version - type of transaction, can be 1 or 3 at the moment
         fn get_required_signer(
-            ref self: ContractState, calls: Span<Call>, fee_amount: u128, tx_version: felt252
+            ref self: ContractState, calls: Span<Call>, fee_amount: u128, tx_version: felt252,
         ) -> interface::RequiredSigner {
             assert_self_caller();
             let execution_info = get_execution_info_v2_syscall().unwrap_syscall().unbox();
             let tx_info = execution_info.tx_info.unbox();
             // Allow only simulation, no execution
             assert(
-                Into::<felt252, u256>::into(tx_info.version).high == 1, Errors::INVALID_TX_VERSION
+                Into::<felt252, u256>::into(tx_info.version).high == 1, Errors::INVALID_TX_VERSION,
             );
 
             let block_timestamp = execution_info.block_info.unbox().block_timestamp;
@@ -694,7 +696,7 @@ mod BraavosAccount {
 
             if !any_strong_signer()
                 || _assert_valid_etd_call(
-                    calls, fee_amount.into(), tx_version.into(), array![].span()
+                    calls, fee_amount.into(), tx_version.into(), array![].span(),
                 ) {
                 return interface::RequiredSigner::Stark;
             }
@@ -702,7 +704,7 @@ mod BraavosAccount {
             let range_on_validate = self
                 .dwl
                 ._handle_bypass_calls_on_validate(
-                    block_timestamp, calls, fee_amount.into(), tx_version
+                    block_timestamp, calls, fee_amount.into(), tx_version,
                 );
             if range_on_validate == BypassRange::NA {
                 return self._get_signer_type_in_account();
@@ -758,7 +760,7 @@ mod BraavosAccount {
         ) -> felt252 {
             let is_query_txn_ver = Into::<felt252, u256>::into(transaction_ver).high == 1;
             let processed_sig = _validate_signature_common(
-                self, hash, signature, !is_query_txn_ver
+                self, hash, signature, !is_query_txn_ver,
             );
 
             _validate_processed_signature(self, processed_sig, false, block_timestamp)

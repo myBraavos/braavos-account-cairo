@@ -14,26 +14,25 @@ trait IERC20BalanceOf<TState> {
 
 #[starknet::component]
 mod RateComponent {
-    use core::array::SpanTrait;
+    use braavos_account::dwl::interface::{
+        FeeInfoResponse, IRateServiceExternal, IRateServiceInternal, MainnetConfig, TokenConfig,
+        TransferInfoResponse, WhitelistCallConfig, WhitelistCallType,
+    };
+    use braavos_account::utils::asserts::assert_self_caller;
+    use braavos_account::utils::utils::mulDiv;
+    use core::array::{ArrayTrait, SpanTrait};
     use core::option::OptionTrait;
     use core::traits::{Into, TryInto};
-    use core::array::ArrayTrait;
-    use starknet::{
-        get_contract_address, SyscallResultTrait, ContractAddress, Felt252TryIntoContractAddress,
-        ContractAddressIntoFelt252, contract_address_const,
-    };
-    use braavos_account::dwl::interface::{
-        IRateServiceInternal, TokenConfig, TransferInfoResponse, WhitelistCallConfig,
-        IRateServiceExternal, FeeInfoResponse, WhitelistCallType, MainnetConfig
-    };
-    use super::{
-        IPoolPrice, IPoolPriceDispatcher, IPoolPriceDispatcherTrait, IERC20BalanceOf,
-        IERC20BalanceOfDispatcher, IERC20BalanceOfDispatcherTrait
-    };
-    use braavos_account::utils::asserts::{assert_self_caller};
-    use braavos_account::utils::utils::{mulDiv};
     use dict::Felt252DictTrait;
     use starknet::storage::Map;
+    use starknet::{
+        ContractAddress, ContractAddressIntoFelt252, Felt252TryIntoContractAddress,
+        SyscallResultTrait, get_contract_address,
+    };
+    use super::{
+        IERC20BalanceOf, IERC20BalanceOfDispatcher, IERC20BalanceOfDispatcherTrait, IPoolPrice,
+        IPoolPriceDispatcher, IPoolPriceDispatcherTrait,
+    };
 
     #[storage]
     struct Storage {
@@ -74,7 +73,7 @@ mod RateComponent {
 
     /// Calculates value of amount with a given fee
     #[inline(always)]
-    fn _get_value_in_threshold_currency_with_rate(fee_rate: u128, amount: u256,) -> u128 {
+    fn _get_value_in_threshold_currency_with_rate(fee_rate: u128, amount: u256) -> u128 {
         mulDiv(amount, fee_rate.into(), Consts::ETHER).try_into().unwrap() + 1
     }
 
@@ -87,7 +86,7 @@ mod RateComponent {
     /// add an extra + 1. The only scenario where we don't add this +1 is when
     /// we calculate rate in _get_rate since the input there is 10**18.
     fn _get_value_in_threshold_currency(
-        token_config: TokenConfig, amount: u256, is_round: bool
+        token_config: TokenConfig, amount: u256, is_round: bool,
     ) -> u256 {
         let round = if is_round {
             1
@@ -95,9 +94,9 @@ mod RateComponent {
             0
         };
         let sqrt_price_x96_sqr = IPoolPriceDispatcher {
-            contract_address: MainnetConfig::PRICE_CONTRACT_ADDRESS.try_into().unwrap()
+            contract_address: MainnetConfig::PRICE_CONTRACT_ADDRESS.try_into().unwrap(),
         }
-            .get_average_price(token_config.pool_key, Consts::DAY_SEC,);
+            .get_average_price(token_config.pool_key, Consts::DAY_SEC);
         assert(sqrt_price_x96_sqr != 0_u256, Errors::INVALID_PRICE);
         // usdc is token0 => rate ** 2 == ([eth / usdc]) **2
         if token_config.is_threshold_currency_token0 {
@@ -114,7 +113,7 @@ mod RateComponent {
     > of IRateServiceInternal<ComponentState<TContractState>> {
         /// Calculates fee based on the transaction version and the fee amount.
         fn _analyze_fee(
-            self: @ComponentState<TContractState>, fee: u256, version: felt252
+            self: @ComponentState<TContractState>, fee: u256, version: felt252,
         ) -> FeeInfoResponse {
             let fee_config = if version == 3 {
                 self._get_stark_fee_token_config()
@@ -125,10 +124,10 @@ mod RateComponent {
             return FeeInfoResponse {
                 fee_rate: fee_rate,
                 fee_in_threshold_currency: _get_value_in_threshold_currency_with_rate(
-                    fee_rate.try_into().unwrap(), fee
+                    fee_rate.try_into().unwrap(), fee,
                 )
                     .into(),
-                is_stark_fee: (version == 3)
+                is_stark_fee: (version == 3),
             };
         }
 
@@ -148,15 +147,15 @@ mod RateComponent {
                     .write(
                         token_address,
                         TokenConfig {
-                            token_address: contract_address_const::<0>(),
+                            token_address: 0.try_into().unwrap(),
                             pool_key: 0,
                             is_threshold_currency: false,
-                            is_threshold_currency_token0: false
-                        }
+                            is_threshold_currency_token0: false,
+                        },
                     );
-                self.white_listed_custom_list.write(i, contract_address_const::<0>());
+                self.white_listed_custom_list.write(i, 0.try_into().unwrap());
                 i += 1;
-            };
+            }
             self.white_listed_custom_list_length.write(0);
         }
 
@@ -184,7 +183,7 @@ mod RateComponent {
                     },
                     Option::None => { break; },
                 };
-            };
+            }
             self.white_listed_custom_list_length.write(i);
 
             loop {
@@ -200,7 +199,7 @@ mod RateComponent {
                         };
                         self
                             .white_listed_contracts_and_selectors
-                            .write((*call_config.to, *call_config.selector,), whitelist_type);
+                            .write((*call_config.to, *call_config.selector), whitelist_type);
                     },
                     Option::None => { break; },
                 };
@@ -212,7 +211,7 @@ mod RateComponent {
         /// will be zero and the is_threshold_currency flag will be set to false indicating
         /// the caller that the configuration is missing
         fn _get_token_config(
-            self: @ComponentState<TContractState>, to: ContractAddress
+            self: @ComponentState<TContractState>, to: ContractAddress,
         ) -> TokenConfig {
             let token_config: TokenConfig = self.white_listed_tokens_map.read(to);
             if token_config.pool_key == 0 && !token_config.is_threshold_currency {
@@ -221,42 +220,42 @@ mod RateComponent {
                         token_address: to,
                         pool_key: MainnetConfig::ETH_USDC_POOL_KEY,
                         is_threshold_currency: false,
-                        is_threshold_currency_token0: false
+                        is_threshold_currency_token0: false,
                     };
                 } else if to == MainnetConfig::STARK_ADDRESS.try_into().unwrap() {
                     return TokenConfig {
                         token_address: to,
                         pool_key: MainnetConfig::STARK_USDC_POOL_KEY,
                         is_threshold_currency: false,
-                        is_threshold_currency_token0: false
+                        is_threshold_currency_token0: false,
                     };
                 } else if to == MainnetConfig::USDT_ADDRESS.try_into().unwrap() {
                     return TokenConfig {
                         token_address: to,
                         pool_key: MainnetConfig::USDT_USDC_POOL_KEY,
                         is_threshold_currency: false,
-                        is_threshold_currency_token0: true
+                        is_threshold_currency_token0: true,
                     };
                 } else if to == MainnetConfig::WBTC_ADDRESS.try_into().unwrap() {
                     return TokenConfig {
                         token_address: to,
                         pool_key: MainnetConfig::WBTC_USDC_POOL_KEY,
                         is_threshold_currency: false,
-                        is_threshold_currency_token0: false
+                        is_threshold_currency_token0: false,
                     };
                 } else if to == MainnetConfig::USDC_ADDRESS.try_into().unwrap() {
                     return TokenConfig {
                         token_address: to,
                         pool_key: 0,
                         is_threshold_currency: true,
-                        is_threshold_currency_token0: false
+                        is_threshold_currency_token0: false,
                     };
                 }
                 return TokenConfig {
-                    token_address: contract_address_const::<0>(),
+                    token_address: 0.try_into().unwrap(),
                     pool_key: 0,
                     is_threshold_currency: false,
-                    is_threshold_currency_token0: false
+                    is_threshold_currency_token0: false,
                 };
             } else {
                 return token_config;
@@ -264,7 +263,7 @@ mod RateComponent {
         }
 
         fn _get_whitelist_call_type(
-            self: @ComponentState<TContractState>, to: ContractAddress, selector: felt252
+            self: @ComponentState<TContractState>, to: ContractAddress, selector: felt252,
         ) -> WhitelistCallType {
             self.white_listed_contracts_and_selectors.read((to, selector))
         }
@@ -325,22 +324,22 @@ mod RateComponent {
 
         /// Calculates this transaction's fee value based on given rate
         fn _calc_fee_value_with_rate(
-            self: @ComponentState<TContractState>, fee_rate: u128, fee: u256
+            self: @ComponentState<TContractState>, fee_rate: u128, fee: u256,
         ) -> u128 {
             _get_value_in_threshold_currency_with_rate(fee_rate, fee)
         }
 
         /// Calculates a given fee value based on stored rate
         fn _calc_fee_value_with_stored_rate_by_version(
-            self: @ComponentState<TContractState>, fee: u256, version: felt252
+            self: @ComponentState<TContractState>, fee: u256, version: felt252,
         ) -> u128 {
             if version == 3 {
                 _get_value_in_threshold_currency_with_rate(
-                    self.stored_fee_rate_stark.read().into(), fee
+                    self.stored_fee_rate_stark.read().into(), fee,
                 )
             } else if version == 1 || version == 0 {
                 _get_value_in_threshold_currency_with_rate(
-                    self.stored_fee_rate_eth.read().into(), fee
+                    self.stored_fee_rate_eth.read().into(), fee,
                 )
             } else {
                 panic_with_felt252(Errors::INVALID_TX);
@@ -351,7 +350,7 @@ mod RateComponent {
 
         /// This function calls the standard erc-20 balanceof method
         fn _get_token_balance(
-            self: @ComponentState<TContractState>, token_address: ContractAddress
+            self: @ComponentState<TContractState>, token_address: ContractAddress,
         ) -> u256 {
             IERC20BalanceOfDispatcher { contract_address: token_address }
                 .balanceOf(get_contract_address())
@@ -366,7 +365,7 @@ mod RateComponent {
         /// certain mainnet hardcoded tokens. It can set them with pool key 0 and false on
         /// is_threshold_currency.
         fn _get_balance_report(
-            self: @ComponentState<TContractState>
+            self: @ComponentState<TContractState>,
         ) -> Span<(ContractAddress, u256)> {
             let mut result: Array<(ContractAddress, u256)> = array![];
 
@@ -391,7 +390,7 @@ mod RateComponent {
                 }
                 token_track_dict.insert(token_address.into(), true);
                 i += 1;
-            };
+            }
 
             if token_track_dict.get(MainnetConfig::ETH_ADDRESS) == false {
                 let eth_address: ContractAddress = MainnetConfig::ETH_ADDRESS.try_into().unwrap();
@@ -432,7 +431,7 @@ mod RateComponent {
             self: @ComponentState<TContractState>,
             old_balance: u256,
             new_balance: u256,
-            token_address: ContractAddress
+            token_address: ContractAddress,
         ) -> u256 {
             if new_balance < old_balance {
                 let diff: u256 = old_balance - new_balance;
@@ -441,7 +440,7 @@ mod RateComponent {
                     return diff;
                 } else {
                     let value_of_diff_in_threshold_currency = _get_value_in_threshold_currency(
-                        token_config, diff, true
+                        token_config, diff, true,
                     );
                     return value_of_diff_in_threshold_currency;
                 }
@@ -452,7 +451,7 @@ mod RateComponent {
         /// This function sums up the diff of all tracked tokens between their current balance
         /// and what is given in the input and returns it in the threshold currency.
         fn _analyze_change_in_balance(
-            self: @ComponentState<TContractState>, previous_report: Span<(ContractAddress, u256)>
+            self: @ComponentState<TContractState>, previous_report: Span<(ContractAddress, u256)>,
         ) -> u128 {
             let new_report: Span<(ContractAddress, u256)> = self._get_balance_report();
             assert(new_report.len() == previous_report.len(), Errors::BAD_BALANCE);
@@ -470,7 +469,7 @@ mod RateComponent {
                 total_delta += self
                     ._get_diff_in_threshold_currency(old_token_balance, new_token_balance, old_add);
                 i += 1;
-            };
+            }
 
             return total_delta.try_into().unwrap();
         }

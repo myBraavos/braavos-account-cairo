@@ -3,7 +3,7 @@ name = "braavos_account"
 version = "1.0.1"
 
 [dependencies]
-starknet = ">=2.8.4"
+starknet = ">=2.11.2"
 
 [[target.starknet-contract]]
 allowed-libfuncs-list.name = "all"

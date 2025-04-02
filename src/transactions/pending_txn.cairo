@@ -5,30 +5,31 @@
 
 #[starknet::component]
 mod PendingTransactions {
-    use core::array::ArrayTrait;
-    use core::option::OptionTrait;
-    use core::traits::{TryInto, Into};
-    use starknet::account::Call;
-    use starknet::{get_tx_info, get_contract_address, call_contract_syscall};
-    use braavos_account::utils::asserts::assert_self_caller;
-    use braavos_account::transactions::moa_tx_hash::calculate_moa_tx_hash;
-    use braavos_account::utils::utils::{execute_calls, extract_fee_from_tx};
     use braavos_account::signers::interface::{IMoaSignManagementExternal, IMultisig};
     use braavos_account::signers::signers::{
-        MoaExtSigner, MoaExtSignerHelperMethods, MoaSignerMethods
+        MoaExtSigner, MoaExtSignerHelperMethods, MoaSignerMethods,
     };
     use braavos_account::transactions::interface::{
-        IPendingTxnExternalTrait, IPendingTxnInternalTrait, Transaction
+        IPendingTxnExternalTrait, IPendingTxnInternalTrait, Transaction,
     };
+    use braavos_account::transactions::moa_tx_hash::calculate_moa_tx_hash;
+    use braavos_account::utils::asserts::assert_self_caller;
+    use braavos_account::utils::utils::{execute_calls, extract_fee_from_tx};
+    use core::array::ArrayTrait;
+    use core::option::OptionTrait;
+    use core::traits::{Into, TryInto};
+    use starknet::account::Call;
     use starknet::storage::Map;
+    use starknet::{call_contract_syscall, get_contract_address, get_tx_info};
 
     mod Consts {
         // 0.03 ETH limit for v1 transactions
         const NON_EXECUTING_SIGNER_MAX_FEE_LIMIT_ETH: felt252 = 30000000000000000;
         // 30 STRK limit for v3 transactions
         const NON_EXECUTING_SIGNER_MAX_FEE_LIMIT_STARK: felt252 = 30000000000000000000;
-        const SIGN_PENDING_FUNCTION_SELECTOR: felt252 =
-            selector!("sign_pending_multisig_transaction");
+        const SIGN_PENDING_FUNCTION_SELECTOR: felt252 = selector!(
+            "sign_pending_multisig_transaction",
+        );
         const ASSERT_MAX_FEE_FUNCTION_SELECTOR: felt252 = selector!("assert_max_fee");
     }
 
@@ -72,7 +73,7 @@ mod PendingTransactions {
             calls.len() == 1
                 && *calls.at(0).to == get_contract_address()
                 && *calls.at(0).selector == Consts::SIGN_PENDING_FUNCTION_SELECTOR,
-            Errors::NOT_APPROVAL
+            Errors::NOT_APPROVAL,
         );
     }
 
@@ -84,7 +85,7 @@ mod PendingTransactions {
             calls.len() >= 2
                 && *calls.at(0).to == get_contract_address()
                 && *calls.at(0).selector == Consts::ASSERT_MAX_FEE_FUNCTION_SELECTOR,
-            Errors::NO_MAX_FEE
+            Errors::NO_MAX_FEE,
         );
 
         let max_fee_assert_calldata = *calls.at(0).calldata;
@@ -97,14 +98,14 @@ mod PendingTransactions {
             signing_max_fee_eth <= Consts::NON_EXECUTING_SIGNER_MAX_FEE_LIMIT_ETH
                 .try_into()
                 .unwrap(),
-            Errors::NO_MAX_FEE
+            Errors::NO_MAX_FEE,
         );
         let signing_max_fee_stark: u128 = (*max_fee_assert_calldata.at(3)).try_into().unwrap();
         assert(
             signing_max_fee_stark <= Consts::NON_EXECUTING_SIGNER_MAX_FEE_LIMIT_STARK
                 .try_into()
                 .unwrap(),
-            Errors::NO_MAX_FEE
+            Errors::NO_MAX_FEE,
         );
     }
 
@@ -121,7 +122,9 @@ mod PendingTransactions {
         /// Panic if duplicate signer is passed
         /// Panic if a signer already signed pending tx
         fn _assert_new_unique_signers(
-            self: @ComponentState<TContractState>, tx_hash: felt252, mut signers: Span<MoaExtSigner>
+            self: @ComponentState<TContractState>,
+            tx_hash: felt252,
+            mut signers: Span<MoaExtSigner>,
         ) {
             let mut duplicates: Felt252Dict<bool> = Default::default();
 
@@ -131,7 +134,7 @@ mod PendingTransactions {
                         let signer_guid = signer.signer.guid();
                         assert(
                             !self._is_confirmed.read((tx_hash, signer_guid)),
-                            Errors::ALREADY_CONFIRMED
+                            Errors::ALREADY_CONFIRMED,
                         );
                         assert(duplicates.get(signer_guid) == false, Errors::DUPLICATE_SIG);
                         duplicates.insert(signer_guid, true);
@@ -147,7 +150,7 @@ mod PendingTransactions {
         /// @param confirmations An array of signer IDs who have confirmed
         /// the transaction
         fn _apply_confirmations(
-            ref self: ComponentState<TContractState>, mut confirmations: Array<felt252>
+            ref self: ComponentState<TContractState>, mut confirmations: Array<felt252>,
         ) {
             let mut transaction: Transaction = self._transaction.read();
             transaction.confirmations += confirmations.len();
@@ -167,9 +170,9 @@ mod PendingTransactions {
         /// @param calls The list of calls to execute
         /// @return Array of results of execution of transaction calls
         fn _execute_transaction(
-            ref self: ComponentState<TContractState>, mut calls: Span::<Call>
+            ref self: ComponentState<TContractState>, mut calls: Span<Call>,
         ) -> Array<Span<felt252>> {
-            self._transaction.write(Transaction { pending_tx_hash: 0, confirmations: 0, });
+            self._transaction.write(Transaction { pending_tx_hash: 0, confirmations: 0 });
 
             // first assert_max_fee call was executed in __validate__
             calls.pop_front().expect(Errors::NO_MAX_FEE);
@@ -180,7 +183,7 @@ mod PendingTransactions {
         /// Panic if the current transaction uses a higher max fee
         /// than the given limit
         fn _assert_valid_max_fee(
-            self: @ComponentState<TContractState>, fee_limit_eth: u128, fee_limit_stark: u128
+            self: @ComponentState<TContractState>, fee_limit_eth: u128, fee_limit_stark: u128,
         ) {
             let tx_info = get_tx_info().unbox();
             let version = Into::<felt252, u256>::into(tx_info.version);
@@ -202,7 +205,7 @@ mod PendingTransactions {
             pending_tx_hash: felt252,
             calls: Span<Call>,
             signers_guids: Array<felt252>,
-            sign_pending: bool
+            sign_pending: bool,
         ) -> Array<Span<felt252>> {
             let existing_confirmation: u32 = if (sign_pending) {
                 let tx: Transaction = self._transaction.read();
@@ -219,8 +222,8 @@ mod PendingTransactions {
                     MultisigPendingTransaction {
                         pending_hash: pending_tx_hash,
                         signers: signers_guids.span(),
-                        is_executed: should_execute
-                    }
+                        is_executed: should_execute,
+                    },
                 );
 
             if (should_execute) {
@@ -257,7 +260,7 @@ mod PendingTransactions {
         /// @param signer_guid Signer guid derived from address and pub_key
         /// @return True if a transaction has been confirmed by the signer
         fn is_confirmed(
-            self: @ComponentState<TContractState>, tx_hash: felt252, signer_guid: felt252
+            self: @ComponentState<TContractState>, tx_hash: felt252, signer_guid: felt252,
         ) -> bool {
             self._is_confirmed.read((tx_hash, signer_guid))
         }
@@ -278,7 +281,7 @@ mod PendingTransactions {
             ref self: ComponentState<TContractState>,
             proposer_guid: felt252,
             pending_nonce: felt252,
-            calls: Span<Call>
+            calls: Span<Call>,
         ) -> Array<Span<felt252>> {
             panic_with_felt252(Errors::NOT_ALLOWED);
             array![]
@@ -296,7 +299,7 @@ mod PendingTransactions {
             expected_max_fee_in_eth: u128,
             expected_max_fee_in_stark: u128,
             signer_max_fee_in_eth: u128,
-            signer_max_fee_in_stark: u128
+            signer_max_fee_in_stark: u128,
         ) {
             panic_with_felt252(Errors::NOT_ALLOWED);
         }

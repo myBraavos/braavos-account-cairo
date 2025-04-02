@@ -1,5 +1,5 @@
-use starknet::account::Call;
 use starknet::ContractAddress;
+use starknet::account::Call;
 
 #[derive(Copy, Drop, PartialEq, Serde)]
 enum BypassCallType {
@@ -89,14 +89,14 @@ trait IDwlInternal<TState> {
         fee_rate: u128,
         stark_fee_rate: u128,
         any_strong_signer: bool,
-        is_multisig: bool
+        is_multisig: bool,
     );
     fn _set_withdrawal_limit_low_inner(
         ref self: TState,
         withdrawal_limit_low: u128,
         fee_rate: u128,
         stark_fee_rate: u128,
-        any_strong_signer: bool
+        any_strong_signer: bool,
     );
     fn _get_withdrawal_limit_low_inner(self: @TState) -> u128;
     fn _get_withdrawal_limit_high_inner(self: @TState) -> u128;
@@ -142,7 +142,7 @@ trait IDwlInternal<TState> {
         selector: felt252,
         to: ContractAddress,
         calldata: Span<felt252>,
-        allowed_selector: felt252
+        allowed_selector: felt252,
     ) -> bool;
 }
 
@@ -206,7 +206,7 @@ trait IRateServiceInternal<TState> {
     fn _analyze_fee(self: @TState, fee: u256, version: felt252) -> FeeInfoResponse;
     fn _get_token_config(self: @TState, to: ContractAddress) -> TokenConfig;
     fn _get_whitelist_call_type(
-        self: @TState, to: ContractAddress, selector: felt252
+        self: @TState, to: ContractAddress, selector: felt252,
     ) -> WhitelistCallType;
     fn _get_eth_fee_token_config(self: @TState) -> TokenConfig;
     fn _get_stark_fee_token_config(self: @TState) -> TokenConfig;
@@ -224,17 +224,17 @@ trait IRateServiceInternal<TState> {
     fn _set_stored_stark_fee_rate(ref self: TState, rate: u128);
     // fn _calc_fee_value_with_stored_rate(self: @TState) -> u128;
     fn _calc_fee_value_with_stored_rate_by_version(
-        self: @TState, fee: u256, version: felt252
+        self: @TState, fee: u256, version: felt252,
     ) -> u128;
     fn _calc_fee_value_with_rate(self: @TState, fee_rate: u128, fee: u256) -> u128;
 
     fn _get_token_balance(self: @TState, token_address: ContractAddress) -> u256;
     fn _get_balance_report(self: @TState) -> Span<(ContractAddress, u256)>;
     fn _get_diff_in_threshold_currency(
-        self: @TState, old_balance: u256, new_balance: u256, token_address: ContractAddress
+        self: @TState, old_balance: u256, new_balance: u256, token_address: ContractAddress,
     ) -> u256;
     fn _analyze_change_in_balance(
-        self: @TState, previous_report: Span<(ContractAddress, u256)>
+        self: @TState, previous_report: Span<(ContractAddress, u256)>,
     ) -> u128;
 }
 

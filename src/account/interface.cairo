@@ -1,8 +1,6 @@
-use starknet::ClassHash;
-use starknet::ContractAddress;
-use starknet::account::Call;
-
 use braavos_account::signers::signers::{Secp256r1PubKey, SignerType, StarkPubKey};
+use starknet::account::Call;
+use starknet::{ClassHash, ContractAddress};
 
 const ISRC6_ID: felt252 = 0x2ceccef7f994940b3962a6c67e0ba4fcd37df7d131417c604f91e03caecc1cd;
 const IACCOUNT_ID_LEGACY_OZ_1: felt252 = 0xf10dbd44;
@@ -59,11 +57,11 @@ trait IBraavosAccount<TState> {
 
     // Initializer from Braavos Account Factory
     fn initializer_from_factory(
-        ref self: TState, stark_pub_key: StarkPubKey, deployment_params: AdditionalDeploymentParams
+        ref self: TState, stark_pub_key: StarkPubKey, deployment_params: AdditionalDeploymentParams,
     );
 
     fn get_required_signer(
-        ref self: TState, calls: Span<Call>, fee_amount: u128, tx_version: felt252
+        ref self: TState, calls: Span<Call>, fee_amount: u128, tx_version: felt252,
     ) -> RequiredSigner;
 }
 
@@ -89,7 +87,7 @@ trait IBraavosMOA<TState> {
 
     // Declare / Deploy validation
     fn __validate_deploy__(
-        self: @TState, signers: Array<(ContractAddress, felt252)>, threshold: usize
+        self: @TState, signers: Array<(ContractAddress, felt252)>, threshold: usize,
     ) -> felt252;
     fn __validate_declare__(self: @TState, class_hash: felt252) -> felt252;
 }
